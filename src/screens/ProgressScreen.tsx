@@ -10,6 +10,8 @@ import {
   StyleSheet,
   ScrollView,
   RefreshControl,
+  TouchableOpacity,
+  ActivityIndicator,
 } from 'react-native';
 import { format, startOfWeek, endOfWeek } from 'date-fns';
 import { colors, spacing, typography } from '../theme';
@@ -20,11 +22,20 @@ import {
   loadExerciseCatalog,
 } from '../services/storage';
 import { GymSession, OutdoorSession, HabitsData, WeeklySummary } from '../models/types';
+import {
+  generateWeeklyReport,
+  getMotivationalMessage,
+} from '../services/geminiAI';
 
 export default function ProgressScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [weeklySummary, setWeeklySummary] = useState<WeeklySummary | null>(null);
+  const [aiInsights, setAiInsights] = useState<string | null>(null);
+  const [motivationalMessage, setMotivationalMessage] = useState<string | null>(null);
+  const [loadingAI, setLoadingAI] = useState(false);
+  const [gymSessions, setGymSessions] = useState<GymSession[]>([]);
+  const [outdoorSessions, setOutdoorSessions] = useState<OutdoorSession[]>([]);
 
   useEffect(() => {
     loadProgressData();
@@ -32,24 +43,27 @@ export default function ProgressScreen() {
 
   const loadProgressData = async () => {
     try {
-      const [gymSessions, outdoorSessions, habits, catalog] = await Promise.all([
+      const [loadedGymSessions, loadedOutdoorSessions, habits, catalog] = await Promise.all([
         loadGymSessions(),
         loadOutdoorSessions(),
         loadHabits(),
         loadExerciseCatalog(),
       ]);
 
+      setGymSessions(loadedGymSessions);
+      setOutdoorSessions(loadedOutdoorSessions);
+
       // Calculate this week's summary
       const now = new Date();
       const weekStart = startOfWeek(now, { weekStartsOn: 1 });
       const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
 
-      const thisWeekGym = gymSessions.filter((s) => {
+      const thisWeekGym = loadedGymSessions.filter((s) => {
         const sessionDate = new Date(s.date);
         return sessionDate >= weekStart && sessionDate <= weekEnd;
       });
 
-      const thisWeekOutdoor = outdoorSessions.filter((s) => {
+      const thisWeekOutdoor = loadedOutdoorSessions.filter((s) => {
         const sessionDate = new Date(s.date);
         return sessionDate >= weekStart && sessionDate <= weekEnd;
       });
@@ -121,6 +135,49 @@ export default function ProgressScreen() {
   const onRefresh = () => {
     setRefreshing(true);
     loadProgressData();
+  };
+
+  const generateAIInsights = async () => {
+    try {
+      setLoadingAI(true);
+
+      // Get this week's sessions
+      const now = new Date();
+      const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+      const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
+
+      const thisWeekSessions = [
+        ...gymSessions.filter((s) => {
+          const sessionDate = new Date(s.date);
+          return sessionDate >= weekStart && sessionDate <= weekEnd;
+        }),
+        ...outdoorSessions.filter((s) => {
+          const sessionDate = new Date(s.date);
+          return sessionDate >= weekStart && sessionDate <= weekEnd;
+        }),
+      ];
+
+      if (thisWeekSessions.length === 0) {
+        setAiInsights('No sessions completed this week yet. Start your first workout to get AI insights!');
+        setMotivationalMessage('Every journey starts with a single step. Let\'s make today count!');
+        setLoadingAI(false);
+        return;
+      }
+
+      // Generate weekly report and motivational message in parallel
+      const [weeklyReport, motivationMsg] = await Promise.all([
+        generateWeeklyReport(thisWeekSessions),
+        getMotivationalMessage([...gymSessions, ...outdoorSessions].slice(-5)),
+      ]);
+
+      setAiInsights(weeklyReport);
+      setMotivationalMessage(motivationMsg);
+      setLoadingAI(false);
+    } catch (error) {
+      console.error('Error generating AI insights:', error);
+      setAiInsights('Unable to generate AI insights at this time. Please try again later.');
+      setLoadingAI(false);
+    }
   };
 
   if (loading) {
@@ -235,6 +292,42 @@ export default function ProgressScreen() {
           </>
         )}
       </View>
+
+      {/* AI-Powered Insights */}
+      <View style={styles.card}>
+        <View style={styles.aiHeaderRow}>
+          <Text style={styles.cardTitle}>AI Coach Insights</Text>
+          <TouchableOpacity
+            style={[styles.aiButton, loadingAI && styles.aiButtonDisabled]}
+            onPress={generateAIInsights}
+            disabled={loadingAI}
+          >
+            {loadingAI ? (
+              <ActivityIndicator size="small" color={colors.white} />
+            ) : (
+              <Text style={styles.aiButtonText}>Generate</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {motivationalMessage && (
+          <View style={styles.motivationCard}>
+            <Text style={styles.motivationText}>{motivationalMessage}</Text>
+          </View>
+        )}
+
+        {aiInsights && (
+          <View style={styles.aiInsightsContainer}>
+            <Text style={styles.aiInsightsText}>{aiInsights}</Text>
+          </View>
+        )}
+
+        {!aiInsights && !loadingAI && (
+          <Text style={styles.aiPlaceholder}>
+            Tap "Generate" to get AI-powered analysis of your weekly training and personalized recommendations.
+          </Text>
+        )}
+      </View>
     </ScrollView>
   );
 }
@@ -316,5 +409,57 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     lineHeight: typography.fontSize.base * 1.5,
     marginBottom: spacing.xs,
+  },
+  aiHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  aiButton: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 8,
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  aiButtonDisabled: {
+    opacity: 0.6,
+  },
+  aiButtonText: {
+    color: colors.white,
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.semibold,
+  },
+  motivationCard: {
+    backgroundColor: colors.primary + '15',
+    borderLeftWidth: 4,
+    borderLeftColor: colors.primary,
+    padding: spacing.md,
+    borderRadius: 8,
+    marginBottom: spacing.md,
+  },
+  motivationText: {
+    fontSize: typography.fontSize.base,
+    color: colors.textPrimary,
+    fontStyle: 'italic',
+    lineHeight: typography.fontSize.base * 1.5,
+  },
+  aiInsightsContainer: {
+    backgroundColor: colors.gray100,
+    padding: spacing.md,
+    borderRadius: 8,
+  },
+  aiInsightsText: {
+    fontSize: typography.fontSize.base,
+    color: colors.textPrimary,
+    lineHeight: typography.fontSize.base * 1.6,
+  },
+  aiPlaceholder: {
+    fontSize: typography.fontSize.sm,
+    color: colors.textSecondary,
+    fontStyle: 'italic',
+    textAlign: 'center',
   },
 });

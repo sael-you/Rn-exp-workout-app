@@ -14,6 +14,10 @@ import {
   StreakData,
   AppDataExport,
   ExerciseCatalog,
+  AICoachData,
+  UserProfile,
+  PerformanceInsight,
+  DaySchedule,
 } from '../models/types';
 
 // Storage keys
@@ -27,6 +31,8 @@ const KEYS = {
   STREAKS: '@upper_outdoor/streaks',
   EXERCISE_CATALOG: '@upper_outdoor/exercise_catalog',
   ONBOARDING_COMPLETED: '@upper_outdoor/onboarding_completed',
+  AI_COACH_DATA: '@upper_outdoor/ai_coach_data',
+  MONTHLY_SCHEDULE: '@upper_outdoor/monthly_schedule',
 };
 
 // ============================================================================
@@ -79,11 +85,32 @@ export async function loadWeeklyProgram(): Promise<WeeklyProgram | null> {
 // ============================================================================
 
 export async function saveWorkoutPlan(plan: WorkoutPlan): Promise<void> {
-  return setItem(KEYS.WORKOUT_PLAN, plan);
+  console.log('[Storage] Saving workout plan:', {
+    id: plan.id,
+    name: plan.name,
+    pushExercises: plan.plans.Push?.exercises?.length,
+    pullExercises: plan.plans.Pull?.exercises?.length,
+    upper2Exercises: plan.plans.Upper2?.exercises?.length,
+  });
+  await setItem(KEYS.WORKOUT_PLAN, plan);
+  console.log('[Storage] Workout plan saved successfully');
 }
 
 export async function loadWorkoutPlan(): Promise<WorkoutPlan | null> {
-  return getItem<WorkoutPlan>(KEYS.WORKOUT_PLAN);
+  console.log('[Storage] Loading workout plan...');
+  const plan = await getItem<WorkoutPlan>(KEYS.WORKOUT_PLAN);
+  if (plan) {
+    console.log('[Storage] Workout plan loaded:', {
+      id: plan.id,
+      name: plan.name,
+      pushExercises: plan.plans.Push?.exercises?.length,
+      pullExercises: plan.plans.Pull?.exercises?.length,
+      upper2Exercises: plan.plans.Upper2?.exercises?.length,
+    });
+  } else {
+    console.log('[Storage] No workout plan found in storage');
+  }
+  return plan;
 }
 
 // ============================================================================
@@ -282,6 +309,69 @@ export async function importAllData(data: AppDataExport): Promise<void> {
     saveHabits(data.habits),
     saveSettings(data.settings),
   ]);
+}
+
+// ============================================================================
+// AI Coach Data
+// ============================================================================
+
+export async function saveAICoachData(data: AICoachData): Promise<void> {
+  return setItem(KEYS.AI_COACH_DATA, data);
+}
+
+export async function loadAICoachData(): Promise<AICoachData | null> {
+  return getItem<AICoachData>(KEYS.AI_COACH_DATA);
+}
+
+export async function saveUserProfile(profile: UserProfile): Promise<void> {
+  const coachData = await loadAICoachData();
+  const updated: AICoachData = {
+    userProfile: profile,
+    discoveredInsights: coachData?.discoveredInsights || [],
+    lastWeeklyCheckIn: coachData?.lastWeeklyCheckIn,
+    lastMonthlyReview: coachData?.lastMonthlyReview,
+  };
+  return saveAICoachData(updated);
+}
+
+export async function loadUserProfile(): Promise<UserProfile | null> {
+  const coachData = await loadAICoachData();
+  return coachData?.userProfile || null;
+}
+
+export async function addPerformanceInsight(insight: PerformanceInsight): Promise<void> {
+  const coachData = await loadAICoachData();
+  const insights = coachData?.discoveredInsights || [];
+
+  // Add new insight
+  insights.push(insight);
+
+  // Keep only latest 20 insights
+  const latest = insights
+    .sort((a, b) => new Date(b.discoveredAt).getTime() - new Date(a.discoveredAt).getTime())
+    .slice(0, 20);
+
+  const updated: AICoachData = {
+    userProfile: coachData?.userProfile || { createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    discoveredInsights: latest,
+    lastWeeklyCheckIn: coachData?.lastWeeklyCheckIn,
+    lastMonthlyReview: coachData?.lastMonthlyReview,
+  };
+
+  return saveAICoachData(updated);
+}
+
+// ============================================================================
+// Monthly Schedule
+// ============================================================================
+
+export async function saveMonthlySchedule(schedule: DaySchedule[]): Promise<void> {
+  return setItem(KEYS.MONTHLY_SCHEDULE, schedule);
+}
+
+export async function loadMonthlySchedule(): Promise<DaySchedule[]> {
+  const schedule = await getItem<DaySchedule[]>(KEYS.MONTHLY_SCHEDULE);
+  return schedule || [];
 }
 
 // ============================================================================

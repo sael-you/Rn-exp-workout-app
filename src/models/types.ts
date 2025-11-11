@@ -32,7 +32,8 @@ export interface Exercise {
   target: string; // Primary muscle
   equipment: string;
   gifUrl?: string;
-  imageUrl?: string;
+  imageUrl?: string; // First image for backward compatibility
+  imageUrls?: string[]; // All images for animation
   secondaryMuscles?: string[];
   instructions?: string[];
 }
@@ -76,6 +77,12 @@ export interface WorkoutPlan {
 // Session Logging
 // ============================================================================
 
+export interface AIRecommendation {
+  weight: number;
+  reps: number;
+  source: 'baseline' | 'progression' | 'deload' | 'plateau_recovery';
+}
+
 export interface SetLog {
   id: string;
   weight: number;
@@ -84,6 +91,8 @@ export interface SetLog {
   timestamp: string;
   struggle?: boolean;
   notes?: string;
+  aiRecommended?: AIRecommendation; // What AI suggested for this set
+  performanceRatio?: number; // Actual / Recommended (for learning)
 }
 
 export interface ExerciseLog {
@@ -145,8 +154,8 @@ export interface OutdoorSession {
 export interface HabitLog {
   date: string; // YYYY-MM-DD
   sleep?: number; // hours
-  hydration?: number; // cups or liters
-  stretching?: number; // minutes or boolean
+  hydration?: number; // liters (goal: 3L)
+  stretching?: boolean; // done or not done
   creatine?: boolean;
 }
 
@@ -232,8 +241,72 @@ export interface UserSettings {
 }
 
 // ============================================================================
+// AI Coach & User Profile
+// ============================================================================
+
+export type TrainingGoal = 'strength' | 'hypertrophy' | 'endurance' | 'general_fitness';
+export type ExperienceLevel = 'beginner' | 'intermediate' | 'advanced';
+
+export interface UserInjury {
+  bodyPart: string; // e.g., "Lower back", "Right shoulder"
+  type: string; // e.g., "Previous herniation", "Tendonitis"
+  restrictions?: string[]; // e.g., ["Avoid heavy overhead pressing"]
+}
+
+export interface UserProfile {
+  // Basic info
+  createdAt: string;
+  updatedAt: string;
+
+  // Safety (collected upfront)
+  injuries?: UserInjury[];
+  excludedExercises?: string[]; // Exercise IDs to never program
+  mobilityIssues?: string[]; // e.g., ["Limited shoulder external rotation"]
+
+  // Goals (optional upfront)
+  primaryGoal?: TrainingGoal;
+  experienceLevel?: ExperienceLevel;
+
+  // AI-generated flag
+  aiGeneratedProgramDate?: string; // When AI last generated a program
+}
+
+export interface PerformanceInsight {
+  type: 'strength' | 'weakness' | 'imbalance' | 'plateau_detected' | 'fast_progress' | 'progress_analysis' | 'weekly_review' | 'auto_adjustment';
+  message: string;
+  discoveredAt: string;
+  relatedExercises?: string[];
+  confidence?: number; // 0-1
+}
+
+export interface AICoachData {
+  userProfile: UserProfile;
+  discoveredInsights: PerformanceInsight[];
+  lastWeeklyCheckIn?: string;
+  lastMonthlyReview?: string;
+}
+
+// ============================================================================
 // Auto-Progression
 // ============================================================================
+
+export interface ExerciseRecommendation {
+  exerciseId: string;
+  dayType: 'Push' | 'Pull' | 'Upper2';
+  weight: number;
+  reps: number;
+  lastUpdated: string;
+  source: 'baseline' | 'progression' | 'deload' | 'plateau_recovery';
+  sessionsAtWeight: number; // How many sessions at this weight
+  plateauDetected: boolean;
+  deloadScheduled: boolean;
+}
+
+export interface ProgressionState {
+  recommendations: ExerciseRecommendation[];
+  lastAnalysis: string;
+  autoAdjustmentsEnabled: boolean;
+}
 
 export interface ProgressionSuggestion {
   exerciseId: string;
@@ -278,4 +351,14 @@ export interface StreakData {
     longest: number;
     lastUpdated: string;
   };
+}
+
+// ============================================================================
+// Monthly Schedule
+// ============================================================================
+
+export interface DaySchedule {
+  date: string; // YYYY-MM-DD
+  dayType: DayType;
+  completed: boolean;
 }

@@ -50,10 +50,13 @@ function transformExercise(raw: RawExercise): Exercise {
   const bodyPart = determineBodyPart(raw.primaryMuscles);
   const target = raw.primaryMuscles?.[0] || 'unknown';
 
-  // Get first image URL if available
-  const imageUrl = raw.images?.[0]
-    ? `${IMAGE_BASE_URL}${raw.images[0]}`
-    : undefined;
+  // Get all image URLs if available
+  const imageUrls = raw.images
+    ? raw.images.map(img => `${IMAGE_BASE_URL}${img}`)
+    : [];
+
+  // First image for backward compatibility
+  const imageUrl = imageUrls[0];
 
   return {
     id: raw.id,
@@ -62,6 +65,7 @@ function transformExercise(raw: RawExercise): Exercise {
     target,
     equipment: raw.equipment || 'bodyweight',
     imageUrl,
+    imageUrls,
     secondaryMuscles: raw.secondaryMuscles,
     instructions: raw.instructions,
   };

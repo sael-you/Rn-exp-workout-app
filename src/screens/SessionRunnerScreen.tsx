@@ -1,6 +1,7 @@
 /**
  * Session Runner Screen
  * For gym days (Push, Pull, Upper2) - log sets with weight and reps
+ * Grid/list view with exercise selection
  */
 
 import React, { useState, useEffect } from 'react';
@@ -10,62 +11,50 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  TextInput,
-  Alert,
+  Image,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { colors, spacing, typography } from '../theme';
+import { useModal } from '../contexts/ModalContext';
 import {
   GymSession,
-  ExerciseLog,
-  SetLog,
   WorkoutPlan,
   Exercise,
-  PlannedExercise,
 } from '../models/types';
 import {
   loadWorkoutPlan,
   saveGymSession,
-  loadGymSessions,
   loadExerciseCatalog,
+  loadGymSessions,
 } from '../services/storage';
+import { analyzeSession } from '../services/geminiAI';
+import { analyzeSessionAndUpdateRecommendations } from '../services/aiProgression';
 import { getBestSet } from '../services/progression';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SessionRunner'>;
 
 export default function SessionRunnerScreen({ route, navigation }: Props) {
   const { dayType, date } = route.params;
+  const { showModal, showError } = useModal();
 
   const [session, setSession] = useState<GymSession | null>(null);
   const [plan, setPlan] = useState<WorkoutPlan | null>(null);
   const [exercises, setExercises] = useState<Exercise[]>([]);
-  const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
-  const [weight, setWeight] = useState('');
-  const [reps, setReps] = useState('');
-  const [restTimer, setRestTimer] = useState(0);
-  const [isResting, setIsResting] = useState(false);
 
   useEffect(() => {
     initializeSession();
   }, []);
 
+  // Refresh session when screen comes back into focus
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isResting && restTimer > 0) {
-      interval = setInterval(() => {
-        setRestTimer((prev) => {
-          if (prev <= 1) {
-            setIsResting(false);
-            // Haptic feedback would go here
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [isResting, restTimer]);
+    const unsubscribe = navigation.addListener('focus', () => {
+      // Reload session data when returning from ExerciseDetail
+      initializeSession();
+    });
+
+    return unsubscribe;
+  }, [navigation]);
 
   const initializeSession = async () => {
     try {
@@ -87,81 +76,67 @@ export default function SessionRunnerScreen({ route, navigation }: Props) {
 
       setExercises(dayExercises);
 
-      // Create or load session
-      const newSession: GymSession = {
-        id: `${dayType}-${date}-${Date.now()}`,
-        dayType,
-        date,
-        startTime: new Date().toISOString(),
-        exercises: dayPlan.exercises.map((pe) => ({
-          exerciseId: pe.exerciseId,
-          sets: [],
-        })),
-        completed: false,
-      };
+      // Load existing sessions
+      const existingSessions = await loadGymSessions();
 
-      setSession(newSession);
+      // Try to find existing session for this day
+      const existingSession = existingSessions.find(
+        (s) => s.dayType === dayType && s.date === date && !s.completed
+      );
+
+      if (existingSession) {
+        // Use existing session
+        setSession(existingSession);
+      } else {
+        // Create new session
+        const newSession: GymSession = {
+          id: `${dayType}-${date}-${Date.now()}`,
+          dayType,
+          date,
+          startTime: new Date().toISOString(),
+          exercises: dayPlan.exercises.map((pe) => ({
+            exerciseId: pe.exerciseId,
+            sets: [],
+          })),
+          completed: false,
+        };
+
+        await saveGymSession(newSession);
+        setSession(newSession);
+      }
     } catch (error) {
       console.error('Error initializing session:', error);
     }
   };
 
-  const handleLogSet = async () => {
-    if (!session || !weight || !reps) {
-      Alert.alert('Missing Data', 'Please enter both weight and reps');
-      return;
-    }
+  const handleExercisePress = (exercise: Exercise) => {
+    if (!session || !plan) return;
 
-    const currentExercise = exercises[currentExerciseIndex];
-    const newSet: SetLog = {
-      id: `${Date.now()}`,
-      weight: parseFloat(weight),
-      reps: parseInt(reps, 10),
-      timestamp: new Date().toISOString(),
-    };
-
-    // Update session with new set
-    const updatedSession = { ...session };
-    const exerciseLog = updatedSession.exercises.find(
-      (ex) => ex.exerciseId === currentExercise.id
+    const plannedExercise = plan.plans[dayType].exercises.find(
+      (pe) => pe.exerciseId === exercise.id
     );
 
-    if (exerciseLog) {
-      exerciseLog.sets.push(newSet);
-      exerciseLog.bestSet = getBestSet(exerciseLog.sets);
-    }
-
-    setSession(updatedSession);
-    await saveGymSession(updatedSession);
-
-    // Clear inputs and start rest timer
-    setWeight('');
-    setReps('');
-    setRestTimer(90); // 90 seconds default
-    setIsResting(true);
-  };
-
-  const handleNextExercise = () => {
-    if (currentExerciseIndex < exercises.length - 1) {
-      setCurrentExerciseIndex(currentExerciseIndex + 1);
-      setIsResting(false);
-      setRestTimer(0);
-    } else {
-      handleFinishSession();
-    }
-  };
-
-  const handlePreviousExercise = () => {
-    if (currentExerciseIndex > 0) {
-      setCurrentExerciseIndex(currentExerciseIndex - 1);
+    if (plannedExercise) {
+      navigation.navigate('ExerciseDetail', {
+        exercise,
+        session,
+        plannedExercise,
+      });
     }
   };
 
   const handleFinishSession = async () => {
     if (!session) return;
 
+    // Calculate bestSet for each exercise
+    const exercisesWithBestSet = session.exercises.map(exerciseLog => ({
+      ...exerciseLog,
+      bestSet: getBestSet(exerciseLog.sets),
+    }));
+
     const finishedSession = {
       ...session,
+      exercises: exercisesWithBestSet,
       endTime: new Date().toISOString(),
       completed: true,
       duration: Math.floor(
@@ -171,9 +146,181 @@ export default function SessionRunnerScreen({ route, navigation }: Props) {
 
     await saveGymSession(finishedSession);
 
-    Alert.alert('Session Complete', 'Great work today!', [
-      { text: 'Done', onPress: () => navigation.goBack() },
-    ]);
+    // Run autonomous AI analysis in background
+    try {
+      const insights = await analyzeSessionAndUpdateRecommendations(finishedSession);
+
+      // Build enhanced auto-adjustment message
+      let autoAdjustmentMessage = '';
+      const autoAdjustments = insights.filter(i => i.type === 'auto_adjustment');
+
+      if (autoAdjustments.length > 0) {
+        // Categorize adjustments
+        const increases = autoAdjustments.filter(a => a.message.includes('💪'));
+        const deloads = autoAdjustments.filter(a => a.message.includes('🔄'));
+        const reductions = autoAdjustments.filter(a => a.message.includes('⚠️'));
+
+        // Build detailed message
+        autoAdjustmentMessage = '\n\n━━━━━━━━━━━━━━━━━━━━━\n';
+        autoAdjustmentMessage += `🤖 AI Auto-Adjustments (${autoAdjustments.length})\n`;
+        autoAdjustmentMessage += '━━━━━━━━━━━━━━━━━━━━━\n\n';
+
+        if (increases.length > 0) {
+          autoAdjustmentMessage += `💪 Weight Increases (${increases.length}):\n`;
+          increases.forEach(i => {
+            const shortMsg = i.message.replace(/💪\s+/, '').replace(/_/g, ' ');
+            autoAdjustmentMessage += `   • ${shortMsg}\n`;
+          });
+          autoAdjustmentMessage += '\n';
+        }
+
+        if (deloads.length > 0) {
+          autoAdjustmentMessage += `🔄 Deload Weeks (${deloads.length}):\n`;
+          deloads.forEach(i => {
+            const shortMsg = i.message.replace(/🔄\s+/, '').replace(/_/g, ' ');
+            autoAdjustmentMessage += `   • ${shortMsg}\n`;
+          });
+          autoAdjustmentMessage += '\n';
+        }
+
+        if (reductions.length > 0) {
+          autoAdjustmentMessage += `⚠️ Weight Reductions (${reductions.length}):\n`;
+          reductions.forEach(i => {
+            const shortMsg = i.message.replace(/⚠️\s+/, '').replace(/_/g, ' ');
+            autoAdjustmentMessage += `   • ${shortMsg}\n`;
+          });
+          autoAdjustmentMessage += '\n';
+        }
+
+        autoAdjustmentMessage += '━━━━━━━━━━━━━━━━━━━━━';
+      }
+
+      // Determine session quality for title
+      const increases = autoAdjustments.filter(a => a.message.includes('💪'));
+      const sessionQuality = increases.length > 0
+        ? `🎉 Great Session!`
+        : 'Session Complete';
+
+      // Build main message
+      const mainMessage = autoAdjustments.length > 0
+        ? `Great work today! AI has automatically adjusted ${autoAdjustments.length} exercise${autoAdjustments.length > 1 ? 's' : ''} for your next workout.${autoAdjustmentMessage}\n\nWould you like detailed AI analysis?`
+        : 'Great work today! Your workout has been saved.\n\nWould you like detailed AI analysis?';
+
+      // Offer AI analysis
+      showModal({
+        type: 'success',
+        title: sessionQuality,
+        message: mainMessage,
+        buttons: [
+          {
+            text: 'Get AI Analysis',
+            style: 'primary',
+            onPress: async () => {
+              try {
+                showModal({
+                  type: 'info',
+                  title: 'AI Analysis',
+                  message: 'Analyzing your workout...',
+                  dismissable: false,
+                });
+                const analysis = await analyzeSession(finishedSession);
+                showModal({
+                  type: 'success',
+                  title: 'AI Coach Feedback',
+                  message: analysis,
+                  buttons: [
+                    { text: 'Done', onPress: () => navigation.goBack(), style: 'primary' },
+                  ],
+                });
+              } catch (error) {
+                showError(
+                  'Error',
+                  'Unable to generate AI analysis. Please check the Progress tab for weekly insights.'
+                );
+                setTimeout(() => navigation.goBack(), 1500);
+              }
+            },
+          },
+          {
+            text: 'Done',
+            style: 'cancel',
+            onPress: () => navigation.goBack(),
+          },
+        ],
+      });
+    } catch (error) {
+      console.error('Error running autonomous AI analysis:', error);
+
+      // Fall back to simple completion message
+      showModal({
+        type: 'success',
+        title: 'Session Complete',
+        message: 'Great work today! Would you like AI analysis of your workout?',
+        buttons: [
+          {
+            text: 'Get AI Analysis',
+            style: 'primary',
+            onPress: async () => {
+              try {
+                showModal({
+                  type: 'info',
+                  title: 'AI Analysis',
+                  message: 'Analyzing your workout...',
+                  dismissable: false,
+                });
+                const analysis = await analyzeSession(finishedSession);
+                showModal({
+                  type: 'success',
+                  title: 'AI Coach Feedback',
+                  message: analysis,
+                  buttons: [
+                    { text: 'Done', onPress: () => navigation.goBack(), style: 'primary' },
+                  ],
+                });
+              } catch (error) {
+                showError(
+                  'Error',
+                  'Unable to generate AI analysis. Please check the Progress tab for weekly insights.'
+                );
+                setTimeout(() => navigation.goBack(), 1500);
+              }
+            },
+          },
+          {
+            text: 'Skip',
+            style: 'cancel',
+            onPress: () => navigation.goBack(),
+          },
+        ],
+      });
+    }
+  };
+
+  const isExerciseCompleted = (exercise: Exercise): boolean => {
+    if (!session || !plan) return false;
+
+    const plannedExercise = plan.plans[dayType].exercises.find(
+      (pe) => pe.exerciseId === exercise.id
+    );
+    const exerciseLog = session.exercises.find((ex) => ex.exerciseId === exercise.id);
+
+    if (!plannedExercise || !exerciseLog) return false;
+
+    return exerciseLog.sets.length >= plannedExercise.targetSets;
+  };
+
+  const getCompletedSetsCount = (exercise: Exercise): number => {
+    if (!session) return 0;
+    const exerciseLog = session.exercises.find((ex) => ex.exerciseId === exercise.id);
+    return exerciseLog?.sets.length || 0;
+  };
+
+  const getTargetSetsCount = (exercise: Exercise): number => {
+    if (!plan) return 0;
+    const plannedExercise = plan.plans[dayType].exercises.find(
+      (pe) => pe.exerciseId === exercise.id
+    );
+    return plannedExercise?.targetSets || 0;
   };
 
   if (!session || exercises.length === 0) {
@@ -184,126 +331,63 @@ export default function SessionRunnerScreen({ route, navigation }: Props) {
     );
   }
 
-  const currentExercise = exercises[currentExerciseIndex];
-  const currentLog = session.exercises.find(
-    (ex) => ex.exerciseId === currentExercise.id
-  );
-  const plannedExercise = plan?.plans[dayType].exercises.find(
-    (pe) => pe.exerciseId === currentExercise.id
-  );
-
   return (
     <View style={styles.container}>
-      {/* Progress Bar */}
-      <View style={styles.progressBar}>
-        <View
-          style={[
-            styles.progressFill,
-            {
-              width: `${((currentExerciseIndex + 1) / exercises.length) * 100}%`,
-            },
-          ]}
-        />
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>{dayType} Day</Text>
+        <TouchableOpacity
+          style={styles.finishButton}
+          onPress={handleFinishSession}
+        >
+          <Text style={styles.finishButtonText}>Finish Session</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content}>
-        {/* Exercise Info */}
-        <View style={styles.exerciseHeader}>
-          <Text style={styles.exerciseNumber}>
-            Exercise {currentExerciseIndex + 1} of {exercises.length}
-          </Text>
-          <Text style={styles.exerciseName}>{currentExercise.name}</Text>
-          <Text style={styles.exerciseTarget}>
-            Target: {currentExercise.target} • {currentExercise.equipment}
-          </Text>
-          {plannedExercise && (
-            <Text style={styles.repRange}>
-              {plannedExercise.targetSets} sets × {plannedExercise.repRangeMin}-
-              {plannedExercise.repRangeMax} reps
-            </Text>
-          )}
-        </View>
+      {/* Exercise Grid */}
+      <ScrollView style={styles.content} contentContainerStyle={styles.gridContainer}>
+        {exercises.map((exercise) => {
+          const completed = isExerciseCompleted(exercise);
+          const completedSets = getCompletedSetsCount(exercise);
+          const targetSets = getTargetSetsCount(exercise);
 
-        {/* Previous Sets */}
-        {currentLog && currentLog.sets.length > 0 && (
-          <View style={styles.setsContainer}>
-            <Text style={styles.setsTitle}>Completed Sets</Text>
-            {currentLog.sets.map((set, index) => (
-              <View key={set.id} style={styles.setRow}>
-                <Text style={styles.setNumber}>Set {index + 1}</Text>
-                <Text style={styles.setText}>
-                  {set.weight}kg × {set.reps} reps
+          return (
+            <TouchableOpacity
+              key={exercise.id}
+              style={[
+                styles.exerciseCard,
+                completed && styles.exerciseCardCompleted,
+              ]}
+              onPress={() => handleExercisePress(exercise)}
+              activeOpacity={0.7}
+            >
+              {exercise.imageUrl && (
+                <Image
+                  source={{ uri: exercise.imageUrl }}
+                  style={styles.exerciseCardImage}
+                  resizeMode="cover"
+                />
+              )}
+              <View style={styles.exerciseCardContent}>
+                <Text style={styles.exerciseCardName} numberOfLines={2}>
+                  {exercise.name}
                 </Text>
+                <Text style={styles.exerciseCardTarget} numberOfLines={1}>
+                  {exercise.target}
+                </Text>
+                <View style={styles.exerciseCardProgress}>
+                  <Text style={styles.exerciseCardSets}>
+                    {completedSets}/{targetSets} sets
+                  </Text>
+                  {completed && (
+                    <Text style={styles.exerciseCardCheckmark}>✓</Text>
+                  )}
+                </View>
               </View>
-            ))}
-          </View>
-        )}
-
-        {/* Log New Set */}
-        <View style={styles.logSection}>
-          <Text style={styles.logTitle}>Log Set</Text>
-          <View style={styles.inputRow}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Weight (kg)</Text>
-              <TextInput
-                style={styles.input}
-                value={weight}
-                onChangeText={setWeight}
-                keyboardType="decimal-pad"
-                placeholder="0"
-                placeholderTextColor={colors.gray400}
-              />
-            </View>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Reps</Text>
-              <TextInput
-                style={styles.input}
-                value={reps}
-                onChangeText={setReps}
-                keyboardType="number-pad"
-                placeholder="0"
-                placeholderTextColor={colors.gray400}
-              />
-            </View>
-          </View>
-          <TouchableOpacity
-            style={styles.logButton}
-            onPress={handleLogSet}
-            disabled={!weight || !reps}
-          >
-            <Text style={styles.logButtonText}>Log Set</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Rest Timer */}
-        {isResting && (
-          <View style={styles.restTimer}>
-            <Text style={styles.restTimerLabel}>Rest</Text>
-            <Text style={styles.restTimerValue}>
-              {Math.floor(restTimer / 60)}:{(restTimer % 60).toString().padStart(2, '0')}
-            </Text>
-          </View>
-        )}
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
-
-      {/* Navigation Buttons */}
-      <View style={styles.footer}>
-        <TouchableOpacity
-          style={[styles.navButton, styles.navButtonSecondary]}
-          onPress={handlePreviousExercise}
-          disabled={currentExerciseIndex === 0}
-        >
-          <Text style={styles.navButtonSecondaryText}>Previous</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.navButton, styles.navButtonPrimary]}
-          onPress={handleNextExercise}
-        >
-          <Text style={styles.navButtonPrimaryText}>
-            {currentExerciseIndex === exercises.length - 1 ? 'Finish' : 'Next Exercise'}
-          </Text>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }
@@ -313,161 +397,84 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  progressBar: {
-    height: 4,
-    backgroundColor: colors.gray200,
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: colors.primary,
-  },
-  content: {
-    flex: 1,
-    padding: spacing.md,
-  },
-  exerciseHeader: {
-    marginBottom: spacing.lg,
-  },
-  exerciseNumber: {
-    fontSize: typography.fontSize.sm,
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    marginBottom: spacing.xs,
-  },
-  exerciseName: {
-    fontSize: typography.fontSize['2xl'],
-    fontWeight: typography.fontWeight.bold,
-    color: colors.textPrimary,
-    marginBottom: spacing.xs,
-  },
-  exerciseTarget: {
-    fontSize: typography.fontSize.base,
-    color: colors.textSecondary,
-    marginBottom: spacing.xs,
-  },
-  repRange: {
-    fontSize: typography.fontSize.base,
-    color: colors.primary,
-    fontWeight: typography.fontWeight.semibold,
-  },
-  setsContainer: {
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: spacing.md,
-    marginBottom: spacing.lg,
-  },
-  setsTitle: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.textPrimary,
-    marginBottom: spacing.sm,
-  },
-  setRow: {
+  header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: spacing.sm,
+    alignItems: 'center',
+    padding: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: colors.gray200,
   },
-  setNumber: {
-    fontSize: typography.fontSize.base,
-    color: colors.textSecondary,
-  },
-  setText: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
+  headerTitle: {
+    fontSize: typography.fontSize.xl,
+    fontWeight: typography.fontWeight.bold,
     color: colors.textPrimary,
   },
-  logSection: {
+  finishButton: {
+    backgroundColor: colors.success,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 8,
+  },
+  finishButtonText: {
+    color: colors.white,
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.semibold,
+  },
+  content: {
+    flex: 1,
+  },
+  gridContainer: {
+    padding: spacing.md,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+  },
+  exerciseCard: {
+    width: '48%',
     backgroundColor: colors.surface,
     borderRadius: 12,
-    padding: spacing.lg,
-    marginBottom: spacing.lg,
+    overflow: 'hidden',
+    borderWidth: 3,
+    borderColor: 'transparent',
   },
-  logTitle: {
-    fontSize: typography.fontSize.lg,
+  exerciseCardCompleted: {
+    borderColor: colors.success,
+  },
+  exerciseCardImage: {
+    width: '100%',
+    height: 120,
+    backgroundColor: colors.gray100,
+  },
+  exerciseCardContent: {
+    padding: spacing.md,
+  },
+  exerciseCardName: {
+    fontSize: typography.fontSize.base,
     fontWeight: typography.fontWeight.semibold,
     color: colors.textPrimary,
-    marginBottom: spacing.md,
+    marginBottom: spacing.xs,
+    minHeight: 40,
   },
-  inputRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    marginBottom: spacing.md,
-  },
-  inputGroup: {
-    flex: 1,
-  },
-  inputLabel: {
+  exerciseCardTarget: {
     fontSize: typography.fontSize.sm,
     color: colors.textSecondary,
-    marginBottom: spacing.xs,
+    textTransform: 'capitalize',
+    marginBottom: spacing.sm,
+  },
+  exerciseCardProgress: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  exerciseCardSets: {
+    fontSize: typography.fontSize.sm,
+    color: colors.textSecondary,
     fontWeight: typography.fontWeight.medium,
   },
-  input: {
-    backgroundColor: colors.background,
-    borderWidth: 2,
-    borderColor: colors.gray300,
-    borderRadius: 8,
-    padding: spacing.md,
-    fontSize: typography.fontSize.xl,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.textPrimary,
-  },
-  logButton: {
-    backgroundColor: colors.primary,
-    paddingVertical: spacing.md,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  logButtonText: {
-    color: colors.white,
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.semibold,
-  },
-  restTimer: {
-    backgroundColor: colors.success,
-    borderRadius: 12,
-    padding: spacing.lg,
-    alignItems: 'center',
-  },
-  restTimerLabel: {
-    fontSize: typography.fontSize.base,
-    color: colors.white,
-    marginBottom: spacing.xs,
-  },
-  restTimerValue: {
-    fontSize: typography.fontSize['4xl'],
+  exerciseCardCheckmark: {
+    fontSize: 20,
+    color: colors.success,
     fontWeight: typography.fontWeight.bold,
-    color: colors.white,
-  },
-  footer: {
-    flexDirection: 'row',
-    padding: spacing.md,
-    gap: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.gray200,
-  },
-  navButton: {
-    flex: 1,
-    paddingVertical: spacing.md,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  navButtonPrimary: {
-    backgroundColor: colors.primary,
-  },
-  navButtonSecondary: {
-    backgroundColor: colors.gray200,
-  },
-  navButtonPrimaryText: {
-    color: colors.white,
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.semibold,
-  },
-  navButtonSecondaryText: {
-    color: colors.textPrimary,
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.semibold,
   },
 });

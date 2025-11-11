@@ -10,11 +10,11 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { colors, spacing, typography } from '../theme';
+import { useModal } from '../contexts/ModalContext';
 import {
   OutdoorSession,
   OutdoorInterval,
@@ -39,6 +39,7 @@ const CORE_EXERCISES: CoreExercise[] = [
 
 export default function OutdoorTimerScreen({ route, navigation }: Props) {
   const { date } = route.params;
+  const { showModal, showSuccess } = useModal();
 
   const [session, setSession] = useState<OutdoorSession | null>(null);
   const [currentPhase, setCurrentPhase] = useState<'idle' | 'work' | 'rest'>('idle');
@@ -118,7 +119,7 @@ export default function OutdoorTimerScreen({ route, navigation }: Props) {
       } else {
         // All rounds complete
         setCurrentPhase('idle');
-        Alert.alert('Intervals Complete', 'Great work! Now complete the core circuit.');
+        showSuccess('Intervals Complete', 'Great work! Now complete the core circuit.');
       }
     }
   };
@@ -167,9 +168,14 @@ export default function OutdoorTimerScreen({ route, navigation }: Props) {
 
     await saveOutdoorSession(finishedSession);
 
-    Alert.alert('Outdoor Session Complete', 'Excellent work today!', [
-      { text: 'Done', onPress: () => navigation.goBack() },
-    ]);
+    showModal({
+      type: 'success',
+      title: 'Outdoor Session Complete',
+      message: 'Excellent work today!',
+      buttons: [
+        { text: 'Done', onPress: () => navigation.goBack(), style: 'primary' },
+      ],
+    });
   };
 
   const completedCoreCount = coreExercises.filter((ex) => ex.completed).length;
@@ -373,11 +379,11 @@ const styles = StyleSheet.create({
   },
   timerWork: {
     borderColor: colors.dayOutdoor,
-    backgroundColor: '#F0FDF4',
+    backgroundColor: colors.dayOutdoor + '20',
   },
   timerRest: {
     borderColor: colors.warning,
-    backgroundColor: '#FEF3C7',
+    backgroundColor: colors.warning + '20',
   },
   timerPhase: {
     fontSize: typography.fontSize.lg,

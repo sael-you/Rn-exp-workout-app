@@ -3,7 +3,7 @@
  * High contrast, accessible, clean design
  */
 
-export const colors = {
+const baseColors = {
   // Primary palette
   primary: '#2563EB', // Blue
   primaryDark: '#1E40AF',
@@ -35,20 +35,24 @@ export const colors = {
   gray700: '#374151',
   gray800: '#1F2937',
   gray900: '#111827',
+};
 
-  // Background
+export const lightColors = {
+  ...baseColors,
+
+  // Background (light mode)
   background: '#FFFFFF',
   backgroundSecondary: '#F9FAFB',
   surface: '#FFFFFF',
   surfaceElevated: '#F9FAFB',
 
-  // Text
+  // Text (light mode)
   textPrimary: '#111827',
   textSecondary: '#6B7280',
   textTertiary: '#9CA3AF',
   textInverse: '#FFFFFF',
 
-  // Borders
+  // Borders (light mode)
   border: '#E5E7EB',
   borderLight: '#F3F4F6',
   borderDark: '#D1D5DB',
@@ -59,13 +63,19 @@ export const colors = {
 };
 
 export const darkColors = {
-  ...colors,
+  ...baseColors,
 
   // Background (dark mode)
   background: '#111827',
   backgroundSecondary: '#1F2937',
   surface: '#1F2937',
   surfaceElevated: '#374151',
+
+  // Grays inverted for dark mode (darker backgrounds, lighter text)
+  gray50: '#1F2937',
+  gray100: '#374151',
+  gray200: '#4B5563',
+  gray300: '#6B7280',
 
   // Text (dark mode)
   textPrimary: '#F9FAFB',
@@ -77,7 +87,14 @@ export const darkColors = {
   border: '#374151',
   borderLight: '#4B5563',
   borderDark: '#1F2937',
+
+  // Overlays
+  overlay: 'rgba(0, 0, 0, 0.5)',
+  overlayLight: 'rgba(0, 0, 0, 0.3)',
 };
+
+// Use dark theme by default
+export const colors = darkColors;
 
 export const spacing = {
   xs: 4,
@@ -193,6 +210,7 @@ export const getDayTypeColor = (dayType: string): string => {
 
 export default {
   colors,
+  lightColors,
   darkColors,
   spacing,
   borderRadius,

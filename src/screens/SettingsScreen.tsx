@@ -3,24 +3,46 @@
  * Manage training schedule, export/import, preferences
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
   Share,
   Platform,
 } from 'react-native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { RootStackParamList } from '../navigation/AppNavigator';
 import { format } from 'date-fns';
 import { colors, spacing, typography } from '../theme';
-import { exportAllData, importAllData, clearAllData } from '../services/storage';
+import { useModal } from '../contexts/ModalContext';
+import { exportAllData, importAllData, clearAllData, loadUserProfile } from '../services/storage';
+import { UserProfile } from '../models/types';
 // FileSystem not needed for basic export
 
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
 export default function SettingsScreen() {
+  const navigation = useNavigation<NavigationProp>();
+  const insets = useSafeAreaInsets();
+  const { showSuccess, showError, showModal, showConfirm } = useModal();
   const [exporting, setExporting] = useState(false);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      loadProfile();
+    }, [])
+  );
+
+  const loadProfile = async () => {
+    const profile = await loadUserProfile();
+    setUserProfile(profile);
+  };
 
   const handleExport = async () => {
     try {
@@ -37,47 +59,44 @@ export default function SettingsScreen() {
         title: filename,
       });
 
-      Alert.alert('Success', 'Backup exported successfully');
+      showSuccess('Success', 'Backup exported successfully');
       setExporting(false);
     } catch (error) {
       console.error('Error exporting data:', error);
-      Alert.alert('Error', 'Failed to export data');
+      showError('Error', 'Failed to export data');
       setExporting(false);
     }
   };
 
   const handleImport = () => {
-    Alert.alert(
-      'Import Data',
-      'To import your backup:\n\n1. Ensure you have a valid backup file\n2. Use your device\'s file manager to open the .json file\n3. Choose "Upper+Outdoor" to import\n\nNote: This feature requires implementation with expo-document-picker.',
-      [{ text: 'OK' }]
-    );
+    showModal({
+      type: 'info',
+      title: 'Import Data',
+      message: 'To import your backup:\n\n1. Ensure you have a valid backup file\n2. Use your device\'s file manager to open the .json file\n3. Choose "Upper+Outdoor" to import\n\nNote: This feature requires implementation with expo-document-picker.',
+      buttons: [{ text: 'OK', onPress: () => {}, style: 'primary' }],
+    });
   };
 
   const handleClearData = () => {
-    Alert.alert(
+    showConfirm(
       'Clear All Data',
       'This will permanently delete all your training data, habits, and settings. This cannot be undone.\n\nMake sure you have exported a backup first!',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete Everything',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await clearAllData();
-              Alert.alert('Success', 'All data cleared. Please restart the app.');
-            } catch (error) {
-              Alert.alert('Error', 'Failed to clear data');
-            }
-          },
-        },
-      ]
+      async () => {
+        try {
+          await clearAllData();
+          showSuccess('Success', 'All data cleared. Please restart the app.');
+        } catch (error) {
+          showError('Error', 'Failed to clear data');
+        }
+      }
     );
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + spacing.md }]}
+    >
       {/* App Info */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Upper+Outdoor</Text>
@@ -112,20 +131,6 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Training Schedule */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Training Schedule</Text>
-        <View style={styles.scheduleCard}>
-          <ScheduleDay day="Monday" type="Push" />
-          <ScheduleDay day="Wednesday" type="Pull" />
-          <ScheduleDay day="Friday" type="Upper2" />
-          <ScheduleDay day="Sunday" type="Outdoor" />
-        </View>
-        <Text style={styles.scheduleNote}>
-          Note: Schedule editing coming in future update
-        </Text>
-      </View>
-
       {/* About */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>About</Text>
@@ -135,6 +140,23 @@ export default function SettingsScreen() {
           All data stored locally on your device.{'\n'}
           No analytics, no tracking, no cloud.
         </Text>
+      </View>
+
+      {/* Developer Tools */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>🔧 Developer Tools</Text>
+        <Text style={styles.sectionSubtitle}>
+          Load test scenarios and test AI coach functionality
+        </Text>
+        <TouchableOpacity
+          style={[styles.settingButton, styles.devToolsButton]}
+          onPress={() => navigation.navigate('DeveloperTools')}
+        >
+          <Text style={styles.settingButtonText}>Open Developer Tools</Text>
+          <Text style={styles.settingButtonSubtext}>
+            Load mock data scenarios and test AI analysis
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Danger Zone */}
@@ -158,7 +180,17 @@ export default function SettingsScreen() {
   );
 }
 
-function ScheduleDay({ day, type }: { day: string; type: string }) {
+function ScheduleDay({
+  day,
+  type,
+  onPress,
+  disabled,
+}: {
+  day: string;
+  type: string;
+  onPress?: () => void;
+  disabled?: boolean;
+}) {
   const getTypeColor = () => {
     switch (type) {
       case 'Push':
@@ -174,13 +206,34 @@ function ScheduleDay({ day, type }: { day: string; type: string }) {
     }
   };
 
-  return (
-    <View style={styles.scheduleRow}>
-      <Text style={styles.scheduleDay}>{day}</Text>
-      <View style={[styles.scheduleTypeBadge, { backgroundColor: getTypeColor() }]}>
-        <Text style={styles.scheduleTypeText}>{type}</Text>
+  const content = (
+    <>
+      <View style={styles.scheduleLeft}>
+        <Text style={styles.scheduleDay}>{day}</Text>
+        <View style={[styles.scheduleTypeBadge, { backgroundColor: getTypeColor() }]}>
+          <Text style={styles.scheduleTypeText}>{type}</Text>
+        </View>
       </View>
-    </View>
+      {!disabled && <Text style={styles.scheduleEdit}>✎ Edit</Text>}
+    </>
+  );
+
+  if (disabled || !onPress) {
+    return (
+      <View style={[styles.scheduleRow, disabled && styles.scheduleRowDisabled]}>
+        {content}
+      </View>
+    );
+  }
+
+  return (
+    <TouchableOpacity
+      style={styles.scheduleRow}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
+      {content}
+    </TouchableOpacity>
   );
 }
 
@@ -199,6 +252,11 @@ const styles = StyleSheet.create({
     fontSize: typography.fontSize.xl,
     fontWeight: typography.fontWeight.bold,
     color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  sectionSubtitle: {
+    fontSize: typography.fontSize.sm,
+    color: colors.textSecondary,
     marginBottom: spacing.md,
   },
   versionText: {
@@ -237,13 +295,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: colors.gray200,
+  },
+  scheduleRowDisabled: {
+    opacity: 0.5,
+  },
+  scheduleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
   },
   scheduleDay: {
     fontSize: typography.fontSize.base,
     color: colors.textPrimary,
+    minWidth: 90,
+  },
+  scheduleEdit: {
+    fontSize: typography.fontSize.base,
+    color: colors.primary,
+    fontWeight: typography.fontWeight.medium,
   },
   scheduleTypeBadge: {
     paddingHorizontal: spacing.sm,
@@ -255,11 +327,6 @@ const styles = StyleSheet.create({
     fontSize: typography.fontSize.sm,
     fontWeight: typography.fontWeight.semibold,
   },
-  scheduleNote: {
-    fontSize: typography.fontSize.sm,
-    color: colors.textSecondary,
-    fontStyle: 'italic',
-  },
   aboutText: {
     fontSize: typography.fontSize.base,
     color: colors.textSecondary,
@@ -268,5 +335,36 @@ const styles = StyleSheet.create({
   dangerButton: {
     borderWidth: 2,
     borderColor: colors.error,
+  },
+  devToolsButton: {
+    borderWidth: 2,
+    borderColor: colors.primary,
+    backgroundColor: colors.gray50,
+  },
+  profileInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.gray200,
+  },
+  profileLabel: {
+    fontSize: typography.fontSize.base,
+    color: colors.textSecondary,
+    fontWeight: typography.fontWeight.medium,
+  },
+  profileValue: {
+    fontSize: typography.fontSize.base,
+    color: colors.textPrimary,
+    fontWeight: typography.fontWeight.semibold,
+    textTransform: 'capitalize',
+  },
+  noProfileText: {
+    fontSize: typography.fontSize.sm,
+    color: colors.textSecondary,
+    fontStyle: 'italic',
+    marginBottom: spacing.md,
+    textAlign: 'center',
+    padding: spacing.md,
   },
 });

@@ -6,7 +6,9 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, DarkTheme } from '@react-navigation/native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 
 // Screens (to be created)
 import HomeScreen from '../screens/HomeScreen';
@@ -14,6 +16,14 @@ import ProgressScreen from '../screens/ProgressScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import SessionRunnerScreen from '../screens/SessionRunnerScreen';
 import OutdoorTimerScreen from '../screens/OutdoorTimerScreen';
+import ExerciseDetailScreen from '../screens/ExerciseDetailScreen';
+import EditPlanScreen from '../screens/EditPlanScreen';
+import ProfileSetupScreen from '../screens/ProfileSetupScreen';
+import ProgramPlanningScreen from '../screens/ProgramPlanningScreen';
+import AICoachScreen from '../screens/AICoachScreen';
+import DeveloperToolsScreen from '../screens/DeveloperToolsScreen';
+import ProgressionHistoryScreen from '../screens/ProgressionHistoryScreen';
+import { Exercise, GymSession, PlannedExercise } from '../models/types';
 
 // Types for navigation
 export type RootStackParamList = {
@@ -25,11 +35,26 @@ export type RootStackParamList = {
   OutdoorTimer: {
     date: string;
   };
+  ExerciseDetail: {
+    exercise: Exercise;
+    session: GymSession;
+    plannedExercise: PlannedExercise;
+  };
+  ProgressionHistory: {
+    exercise: Exercise;
+    dayType: 'Push' | 'Pull' | 'Upper2';
+  };
+  EditPlan: {
+    dayType: 'Push' | 'Pull' | 'Upper2';
+  };
+  ProfileSetup: undefined;
+  AICoach: undefined;
+  DeveloperTools: undefined;
 };
 
 export type MainTabParamList = {
   Home: undefined;
-  Progress: undefined;
+  AICoachTab: undefined;
   Settings: undefined;
 };
 
@@ -40,29 +65,32 @@ const Tab = createBottomTabNavigator<MainTabParamList>();
  * Main Tabs Navigator
  */
 function MainTabs() {
+  const insets = useSafeAreaInsets();
+
   return (
     <Tab.Navigator
       screenOptions={{
-        tabBarActiveTintColor: '#2563EB',
+        tabBarActiveTintColor: '#60A5FA',
         tabBarInactiveTintColor: '#9CA3AF',
         tabBarStyle: {
+          backgroundColor: '#1F2937',
           borderTopWidth: 1,
-          borderTopColor: '#E5E7EB',
-          paddingBottom: 8,
+          borderTopColor: '#374151',
+          paddingBottom: insets.bottom + 8,
           paddingTop: 8,
-          height: 60,
+          height: 60 + insets.bottom,
         },
+        headerShown: true,
         headerStyle: {
-          backgroundColor: '#FFFFFF',
-          elevation: 0,
-          shadowOpacity: 0,
-          borderBottomWidth: 1,
-          borderBottomColor: '#E5E7EB',
+          backgroundColor: '#1F2937',
+          height: 44 + insets.top,
         },
         headerTitleStyle: {
-          fontSize: 20,
+          fontSize: 16,
           fontWeight: '600',
+          color: '#F9FAFB',
         },
+        headerTintColor: '#F9FAFB',
       }}
     >
       <Tab.Screen
@@ -71,15 +99,20 @@ function MainTabs() {
         options={{
           title: 'Today',
           tabBarLabel: 'Home',
-          headerTitle: 'Upper+Outdoor',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="home" size={size} color={color} />
+          ),
         }}
       />
       <Tab.Screen
-        name="Progress"
-        component={ProgressScreen}
+        name="AICoachTab"
+        component={AICoachScreen}
         options={{
-          title: 'Progress',
-          tabBarLabel: 'Progress',
+          title: 'AI Coach',
+          tabBarLabel: 'AI Coach',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="sparkles" size={size} color={color} />
+          ),
         }}
       />
       <Tab.Screen
@@ -88,6 +121,9 @@ function MainTabs() {
         options={{
           title: 'Settings',
           tabBarLabel: 'Settings',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="settings" size={size} color={color} />
+          ),
         }}
       />
     </Tab.Navigator>
@@ -97,21 +133,37 @@ function MainTabs() {
 /**
  * Root Stack Navigator
  */
+const customDarkTheme = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    primary: '#60A5FA',
+    background: '#111827',
+    card: '#1F2937',
+    text: '#F9FAFB',
+    border: '#374151',
+    notification: '#2563EB',
+  },
+};
+
 export default function AppNavigator() {
   return (
-    <NavigationContainer>
-      <Stack.Navigator
-        screenOptions={{
-          headerStyle: {
-            backgroundColor: '#FFFFFF',
-          },
-          headerTitleStyle: {
-            fontSize: 20,
-            fontWeight: '600',
-          },
-          headerBackTitle: 'Back',
-        }}
-      >
+    <SafeAreaProvider>
+      <NavigationContainer theme={customDarkTheme}>
+        <Stack.Navigator
+          screenOptions={{
+            headerStyle: {
+              backgroundColor: '#1F2937',
+            },
+            headerTitleStyle: {
+              fontSize: 20,
+              fontWeight: '600',
+              color: '#F9FAFB',
+            },
+            headerTintColor: '#F9FAFB',
+            headerBackTitle: 'Back',
+          }}
+        >
         <Stack.Screen
           name="MainTabs"
           component={MainTabs}
@@ -133,7 +185,56 @@ export default function AppNavigator() {
             presentation: 'card',
           }}
         />
-      </Stack.Navigator>
-    </NavigationContainer>
+        <Stack.Screen
+          name="ExerciseDetail"
+          component={ExerciseDetailScreen}
+          options={({ route }) => ({
+            title: route.params.exercise.name,
+            presentation: 'card',
+          })}
+        />
+        <Stack.Screen
+          name="ProgressionHistory"
+          component={ProgressionHistoryScreen}
+          options={({ route }) => ({
+            title: `${route.params.exercise.name} History`,
+            presentation: 'card',
+          })}
+        />
+        <Stack.Screen
+          name="EditPlan"
+          component={EditPlanScreen}
+          options={({ route }) => ({
+            title: `Edit ${route.params.dayType} Day`,
+            presentation: 'card',
+          })}
+        />
+        <Stack.Screen
+          name="ProfileSetup"
+          component={ProfileSetupScreen}
+          options={{
+            title: 'AI Program Setup',
+            presentation: 'modal',
+          }}
+        />
+        <Stack.Screen
+          name="AICoach"
+          component={AICoachScreen}
+          options={{
+            title: 'AI Coach',
+            presentation: 'card',
+          }}
+        />
+        <Stack.Screen
+          name="DeveloperTools"
+          component={DeveloperToolsScreen}
+          options={{
+            title: 'Developer Tools',
+            presentation: 'card',
+          }}
+        />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 }
