@@ -73,6 +73,7 @@ export default function HomeScreen() {
   const [trainingSplit, setTrainingSplit] = useState<'muscle_group' | 'body_part'>('muscle_group');
   const [isTodayCompleted, setIsTodayCompleted] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [currentDate, setCurrentDate] = useState(new Date().toDateString());
 
   useEffect(() => {
     initializeApp();
@@ -91,18 +92,95 @@ export default function HomeScreen() {
       }
     });
 
-    return () => subscription.remove();
-  }, []);
+    // Check every minute if the day has changed (midnight rollover)
+    const midnightCheckInterval = setInterval(() => {
+      const newDate = new Date().toDateString();
+      if (newDate !== currentDate) {
+        console.log('Day changed! Refreshing...');
+        setCurrentDate(newDate);
+        setRefreshTrigger(prev => prev + 1);
+        // Reload today's workout type
+        initializeApp();
+      }
+    }, 60000); // Check every minute
+
+    return () => {
+      subscription.remove();
+      clearInterval(midnightCheckInterval);
+    };
+  }, [currentDate]);
 
   useEffect(() => {
     loadScheduleForMonth();
     reloadWorkoutPlan();
   }, [currentMonth, refreshTrigger]);
 
+  // Reload today's workout type (for when weekly schedule changes)
+  const reloadTodayType = async () => {
+    const today_date = format(new Date(), 'yyyy-MM-dd');
+
+    // First check if there's a custom day type for today in monthly schedule
+    const monthlySchedule = await loadMonthlySchedule();
+    const todayOverride = monthlySchedule?.find((s) => s.date === today_date);
+
+    let newDayType: DayType = 'Rest';
+
+    if (todayOverride) {
+      // Use the custom day type from monthly schedule
+      newDayType = todayOverride.dayType;
+    } else {
+      // Fall back to weekly program
+      const program = await loadWeeklyProgram();
+      if (program) {
+        const today = new Date().getDay();
+        const todayTraining = program.trainingDays.find(
+          (d) => d.dayOfWeek === today && d.enabled
+        );
+        newDayType = todayTraining?.dayType || 'Rest';
+      }
+    }
+
+    setTodayType(newDayType);
+
+    // Reload today's exercises if needed
+    if (newDayType !== 'Rest' && newDayType !== 'Outdoor') {
+      const workoutPlan = await loadWorkoutPlan();
+      if (workoutPlan) {
+        const catalog = await initializeExerciseCatalog();
+        const dayPlan = workoutPlan.plans[newDayType as keyof typeof workoutPlan.plans];
+        if (dayPlan) {
+          const dayExercises = dayPlan.exercises
+            .sort((a: any, b: any) => a.order - b.order)
+            .map((pe: any) => catalog.exercises.find((ex) => ex.id === pe.exerciseId))
+            .filter(Boolean) as Exercise[];
+          setTodayExercises(dayExercises);
+        }
+      }
+    } else {
+      setTodayExercises([]);
+    }
+
+    // Check if today's workout is completed
+    const gymSessions = await loadGymSessions();
+    const outdoorSessions = await loadOutdoorSessions();
+    const completed =
+      (newDayType !== 'Outdoor' && gymSessions?.some((s) => s.date === today_date && s.completed)) ||
+      (newDayType === 'Outdoor' && outdoorSessions?.some((s) => s.date === today_date && s.completed));
+    setIsTodayCompleted(completed || false);
+
+    // Update notifications for the new day type
+    await scheduleDailyWorkoutReminder(newDayType);
+    await checkAndScheduleMissedWorkoutNotification(newDayType);
+  };
+
   // Reload schedule and workout plan when screen comes into focus
   useFocusEffect(
     React.useCallback(() => {
       setRefreshTrigger(prev => prev + 1);
+      // Reload today's workout type when coming back to this screen
+      (async () => {
+        await reloadTodayType();
+      })();
     }, [])
   );
 
@@ -231,11 +309,27 @@ export default function HomeScreen() {
       }
 
       // Determine today's day type
-      const today = new Date().getDay();
-      const todayTraining = program.trainingDays.find(
-        (d) => d.dayOfWeek === today && d.enabled
-      );
-      setTodayType(todayTraining?.dayType || 'Rest');
+      // First check if there's a custom day type for today in monthly schedule
+      const today_date = format(new Date(), 'yyyy-MM-dd');
+      const monthlySchedule = await loadMonthlySchedule();
+      const todayOverride = monthlySchedule?.find((s) => s.date === today_date);
+
+      let todayDayType: DayType = 'Rest';
+      let todayTraining = null;
+
+      if (todayOverride) {
+        // Use the custom day type from monthly schedule
+        todayDayType = todayOverride.dayType;
+      } else {
+        // Fall back to weekly program
+        const today = new Date().getDay();
+        todayTraining = program.trainingDays.find(
+          (d) => d.dayOfWeek === today && d.enabled
+        );
+        todayDayType = todayTraining?.dayType || 'Rest';
+      }
+
+      setTodayType(todayDayType);
 
       // Load streaks
       let streakData = await loadStreaks();
@@ -250,10 +344,10 @@ export default function HomeScreen() {
       setStreaks(streakData);
 
       // Load today's exercises if it's a workout day
-      if (todayTraining && todayTraining.dayType !== 'Rest' && todayTraining.dayType !== 'Outdoor') {
+      if (todayDayType !== 'Rest' && todayDayType !== 'Outdoor') {
         const workoutPlan = await loadWorkoutPlan();
         if (workoutPlan) {
-          const dayPlan = workoutPlan.plans[todayTraining.dayType as keyof typeof workoutPlan.plans];
+          const dayPlan = workoutPlan.plans[todayDayType as keyof typeof workoutPlan.plans];
           if (dayPlan) {
             const dayExercises = dayPlan.exercises
               .sort((a: any, b: any) => a.order - b.order)
@@ -292,13 +386,10 @@ export default function HomeScreen() {
       }
 
       // Schedule notifications for today's workout
-      if (todayTraining) {
-        const todayDayType = todayTraining.dayType;
-        // Schedule daily workout reminder
-        await scheduleDailyWorkoutReminder(todayDayType);
-        // Check and schedule missed workout notification
-        await checkAndScheduleMissedWorkoutNotification(todayDayType);
-      }
+      // Schedule daily workout reminder
+      await scheduleDailyWorkoutReminder(todayDayType);
+      // Check and schedule missed workout notification
+      await checkAndScheduleMissedWorkoutNotification(todayDayType);
 
       setLoading(false);
     } catch (error) {
@@ -401,6 +492,12 @@ export default function HomeScreen() {
 
       // Trigger refresh to reload calendar
       setRefreshTrigger(prev => prev + 1);
+
+      // If the changed day is today, immediately update today's session
+      const today = format(new Date(), 'yyyy-MM-dd');
+      if (selectedDay === today) {
+        await reloadTodayType();
+      }
     } catch (error) {
       console.error('Error changing day type:', error);
     }
