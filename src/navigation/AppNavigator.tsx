@@ -12,7 +12,6 @@ import { Ionicons } from '@expo/vector-icons';
 
 // Screens (to be created)
 import HomeScreen from '../screens/HomeScreen';
-import ProgressScreen from '../screens/ProgressScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import SessionRunnerScreen from '../screens/SessionRunnerScreen';
 import OutdoorTimerScreen from '../screens/OutdoorTimerScreen';
@@ -23,6 +22,9 @@ import ProgramPlanningScreen from '../screens/ProgramPlanningScreen';
 import AICoachScreen from '../screens/AICoachScreen';
 import DeveloperToolsScreen from '../screens/DeveloperToolsScreen';
 import ProgressionHistoryScreen from '../screens/ProgressionHistoryScreen';
+import SessionHistoryScreen from '../screens/SessionHistoryScreen';
+import EditSessionScreen from '../screens/EditSessionScreen';
+import EditWeeklyScheduleScreen from '../screens/EditWeeklyScheduleScreen';
 import { Exercise, GymSession, PlannedExercise } from '../models/types';
 
 // Types for navigation
@@ -47,6 +49,11 @@ export type RootStackParamList = {
   EditPlan: {
     dayType: GymSession['dayType'];
   };
+  SessionHistory: undefined;
+  EditSession: {
+    sessionId: string;
+  };
+  EditWeeklySchedule: undefined;
   ProfileSetup: undefined;
   AICoach: undefined;
   DeveloperTools: undefined;
@@ -230,6 +237,30 @@ export default function AppNavigator() {
           component={DeveloperToolsScreen}
           options={{
             title: 'Developer Tools',
+            presentation: 'card',
+          }}
+        />
+        <Stack.Screen
+          name="SessionHistory"
+          component={SessionHistoryScreen}
+          options={{
+            title: 'Session History',
+            presentation: 'card',
+          }}
+        />
+        <Stack.Screen
+          name="EditSession"
+          component={EditSessionScreen}
+          options={{
+            title: 'Edit Session',
+            presentation: 'card',
+          }}
+        />
+        <Stack.Screen
+          name="EditWeeklySchedule"
+          component={EditWeeklyScheduleScreen}
+          options={{
+            title: 'Edit Weekly Schedule',
             presentation: 'card',
           }}
         />

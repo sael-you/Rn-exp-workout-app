@@ -281,6 +281,7 @@ export interface UserProfile {
   // Program preferences
   trainingSplit?: TrainingSplit; // Muscle group (PPL) vs Body part split (Chest/Back/etc)
   workoutLocation?: 'gym' | 'home'; // Where user trains
+  availableEquipment?: string[]; // Equipment available at home (only for home workouts)
   weeklyFrequency?: number; // How many times per week (2-6)
   legTrainingPreference?: 'none' | 'spread' | 'dedicated'; // How to include leg training
   outdoorDayPreference?: number; // Day of week (0-6) for outdoor training, undefined = no preference

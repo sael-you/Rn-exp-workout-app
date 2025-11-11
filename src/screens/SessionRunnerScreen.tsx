@@ -31,6 +31,8 @@ import {
 import { analyzeSession } from '../services/geminiAI';
 import { analyzeSessionAndUpdateRecommendations } from '../services/aiProgression';
 import { getBestSet } from '../services/progression';
+import { getStretchExercises } from '../services/exerciseDB';
+import StretchRoutineModal from '../components/StretchRoutineModal';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SessionRunner'>;
 
@@ -41,6 +43,12 @@ export default function SessionRunnerScreen({ route, navigation }: Props) {
   const [session, setSession] = useState<GymSession | null>(null);
   const [plan, setPlan] = useState<WorkoutPlan | null>(null);
   const [exercises, setExercises] = useState<Exercise[]>([]);
+  const [stretchExercises, setStretchExercises] = useState<Exercise[]>([]);
+  const [showStretchModal, setShowStretchModal] = useState(false);
+  const [finishedSessionData, setFinishedSessionData] = useState<GymSession | null>(null);
+  const [sessionQuality, setSessionQuality] = useState('Session Complete');
+  const [autoAdjustmentMessage, setAutoAdjustmentMessage] = useState('');
+  const [autoAdjustmentCount, setAutoAdjustmentCount] = useState(0);
 
   useEffect(() => {
     initializeSession();
@@ -75,6 +83,10 @@ export default function SessionRunnerScreen({ route, navigation }: Props) {
         .filter(Boolean) as Exercise[];
 
       setExercises(dayExercises);
+
+      // Load stretch exercises for post-workout
+      const stretches = getStretchExercises(catalog.exercises, dayType);
+      setStretchExercises(stretches);
 
       // Load existing sessions
       const existingSessions = await loadGymSessions();
@@ -123,6 +135,59 @@ export default function SessionRunnerScreen({ route, navigation }: Props) {
         plannedExercise,
       });
     }
+  };
+
+  const showAIAnalysisOption = (
+    finishedSession: GymSession,
+    sessionQuality: string,
+    autoAdjustmentMessage: string,
+    adjustmentCount: number
+  ) => {
+    const mainMessage = adjustmentCount > 0
+      ? `${autoAdjustmentMessage}\n\nWould you like detailed AI analysis of your workout?`
+      : 'Would you like detailed AI analysis of your workout?';
+
+    showModal({
+      type: 'success',
+      title: sessionQuality,
+      message: mainMessage,
+      buttons: [
+        {
+          text: 'Get AI Analysis',
+          style: 'primary',
+          onPress: async () => {
+            try {
+              showModal({
+                type: 'info',
+                title: 'AI Analysis',
+                message: 'Analyzing your workout...',
+                dismissable: false,
+              });
+              const analysis = await analyzeSession(finishedSession);
+              showModal({
+                type: 'success',
+                title: 'AI Coach Feedback',
+                message: analysis,
+                buttons: [
+                  { text: 'Done', onPress: () => navigation.goBack(), style: 'primary' },
+                ],
+              });
+            } catch (error) {
+              showError(
+                'Error',
+                'Unable to generate AI analysis. Please check the Progress tab for weekly insights.'
+              );
+              setTimeout(() => navigation.goBack(), 1500);
+            }
+          },
+        },
+        {
+          text: 'Done',
+          style: 'cancel',
+          onPress: () => navigation.goBack(),
+        },
+      ],
+    });
   };
 
   const handleFinishSession = async () => {
@@ -197,7 +262,7 @@ export default function SessionRunnerScreen({ route, navigation }: Props) {
 
       // Determine session quality for title
       const increases = autoAdjustments.filter(a => a.message.includes('💪'));
-      const sessionQuality = increases.length > 0
+      const quality = increases.length > 0
         ? `🎉 Great Session!`
         : 'Session Complete';
 
@@ -206,93 +271,82 @@ export default function SessionRunnerScreen({ route, navigation }: Props) {
         ? `Great work today! AI has automatically adjusted ${autoAdjustments.length} exercise${autoAdjustments.length > 1 ? 's' : ''} for your next workout.${autoAdjustmentMessage}\n\nWould you like detailed AI analysis?`
         : 'Great work today! Your workout has been saved.\n\nWould you like detailed AI analysis?';
 
-      // Offer AI analysis
-      showModal({
-        type: 'success',
-        title: sessionQuality,
-        message: mainMessage,
-        buttons: [
-          {
-            text: 'Get AI Analysis',
-            style: 'primary',
-            onPress: async () => {
-              try {
-                showModal({
-                  type: 'info',
-                  title: 'AI Analysis',
-                  message: 'Analyzing your workout...',
-                  dismissable: false,
-                });
-                const analysis = await analyzeSession(finishedSession);
-                showModal({
-                  type: 'success',
-                  title: 'AI Coach Feedback',
-                  message: analysis,
-                  buttons: [
-                    { text: 'Done', onPress: () => navigation.goBack(), style: 'primary' },
-                  ],
-                });
-              } catch (error) {
-                showError(
-                  'Error',
-                  'Unable to generate AI analysis. Please check the Progress tab for weekly insights.'
-                );
-                setTimeout(() => navigation.goBack(), 1500);
-              }
+      // Store finished session data and auto-adjustments for later
+      setFinishedSessionData(finishedSession);
+      setSessionQuality(quality);
+      setAutoAdjustmentMessage(autoAdjustmentMessage);
+      setAutoAdjustmentCount(autoAdjustments.length);
+
+      // Show stretching prompt
+      if (stretchExercises.length > 0) {
+        showModal({
+          type: 'success',
+          title: quality,
+          message: `Great work today! ${autoAdjustments.length > 0 ? `AI adjusted ${autoAdjustments.length} exercise${autoAdjustments.length > 1 ? 's' : ''} for next time.\n\n` : '\n'}Stretching is recommended after each workout to reduce soreness and improve flexibility.\n\nWould you like to stretch now?`,
+          buttons: [
+            {
+              text: `Start Stretching (${Math.ceil(stretchExercises.length * 30 / 60)} min)`,
+              style: 'primary',
+              onPress: () => {
+                setShowStretchModal(true);
+              },
             },
-          },
-          {
-            text: 'Done',
-            style: 'cancel',
-            onPress: () => navigation.goBack(),
-          },
-        ],
-      });
+            {
+              text: 'Skip Stretching',
+              style: 'cancel',
+              onPress: () => {
+                // Skip to AI analysis option
+                showAIAnalysisOption(finishedSession, quality, autoAdjustmentMessage, autoAdjustments.length);
+              },
+            },
+          ],
+        });
+      } else {
+        // No stretches available, go directly to AI analysis
+        showAIAnalysisOption(finishedSession, quality, autoAdjustmentMessage, autoAdjustments.length);
+      }
     } catch (error) {
       console.error('Error running autonomous AI analysis:', error);
 
-      // Fall back to simple completion message
-      showModal({
-        type: 'success',
-        title: 'Session Complete',
-        message: 'Great work today! Would you like AI analysis of your workout?',
-        buttons: [
-          {
-            text: 'Get AI Analysis',
-            style: 'primary',
-            onPress: async () => {
-              try {
-                showModal({
-                  type: 'info',
-                  title: 'AI Analysis',
-                  message: 'Analyzing your workout...',
-                  dismissable: false,
-                });
-                const analysis = await analyzeSession(finishedSession);
-                showModal({
-                  type: 'success',
-                  title: 'AI Coach Feedback',
-                  message: analysis,
-                  buttons: [
-                    { text: 'Done', onPress: () => navigation.goBack(), style: 'primary' },
-                  ],
-                });
-              } catch (error) {
-                showError(
-                  'Error',
-                  'Unable to generate AI analysis. Please check the Progress tab for weekly insights.'
-                );
-                setTimeout(() => navigation.goBack(), 1500);
-              }
+      // Store finished session for later use
+      setFinishedSessionData(finishedSession);
+
+      // Fall back to simple stretching prompt
+      if (stretchExercises.length > 0) {
+        showModal({
+          type: 'success',
+          title: 'Session Complete',
+          message: 'Great work today!\n\nStretching is recommended after each workout. Would you like to stretch now?',
+          buttons: [
+            {
+              text: `Start Stretching (${Math.ceil(stretchExercises.length * 30 / 60)} min)`,
+              style: 'primary',
+              onPress: () => {
+                setShowStretchModal(true);
+              },
             },
-          },
-          {
-            text: 'Skip',
-            style: 'cancel',
-            onPress: () => navigation.goBack(),
-          },
-        ],
-      });
+            {
+              text: 'Skip for Now',
+              style: 'cancel',
+              onPress: () => navigation.goBack(),
+            },
+          ],
+        });
+      } else {
+        // No stretches, just show completion
+        showModal({
+          type: 'success',
+          title: 'Session Complete',
+          message: 'Great work today!',
+          buttons: [
+            {
+              text: 'Done',
+              style: 'primary',
+              onPress: () => navigation.goBack(),
+            },
+          ],
+        });
+      }
     }
   };
 
@@ -321,6 +375,74 @@ export default function SessionRunnerScreen({ route, navigation }: Props) {
       (pe) => pe.exerciseId === exercise.id
     );
     return plannedExercise?.targetSets || 0;
+  };
+
+  const handleStretchComplete = () => {
+    setShowStretchModal(false);
+
+    // Show AI analysis option after stretching
+    if (finishedSessionData) {
+      // Get auto-adjustments for message (we'll need to recalculate or store them)
+      showModal({
+        type: 'success',
+        title: 'Nice work!',
+        message: 'Stretching complete! Would you like detailed AI analysis of your workout?',
+        buttons: [
+          {
+            text: 'Get AI Analysis',
+            style: 'primary',
+            onPress: async () => {
+              try {
+                showModal({
+                  type: 'info',
+                  title: 'AI Analysis',
+                  message: 'Analyzing your workout...',
+                  dismissable: false,
+                });
+                const analysis = await analyzeSession(finishedSessionData);
+                showModal({
+                  type: 'success',
+                  title: 'AI Coach Feedback',
+                  message: analysis,
+                  buttons: [
+                    { text: 'Done', onPress: () => navigation.goBack(), style: 'primary' },
+                  ],
+                });
+              } catch (error) {
+                showError(
+                  'Error',
+                  'Unable to generate AI analysis. Please check the Progress tab for weekly insights.'
+                );
+                setTimeout(() => navigation.goBack(), 1500);
+              }
+            },
+          },
+          {
+            text: 'Done',
+            style: 'cancel',
+            onPress: () => navigation.goBack(),
+          },
+        ],
+      });
+    } else {
+      navigation.goBack();
+    }
+  };
+
+  const handleStretchSkip = () => {
+    setShowStretchModal(false);
+
+    // Show AI analysis option when user skips stretching from within the modal
+    if (finishedSessionData) {
+      showAIAnalysisOption(
+        finishedSessionData,
+        sessionQuality,
+        autoAdjustmentMessage,
+        autoAdjustmentCount
+      );
+    } else {
+      navigation.goBack();
+    }
   };
 
   if (!session || exercises.length === 0) {
@@ -388,6 +510,14 @@ export default function SessionRunnerScreen({ route, navigation }: Props) {
           );
         })}
       </ScrollView>
+
+      {/* Stretch Routine Modal */}
+      <StretchRoutineModal
+        visible={showStretchModal}
+        stretches={stretchExercises}
+        onComplete={handleStretchComplete}
+        onSkip={handleStretchSkip}
+      />
     </View>
   );
 }

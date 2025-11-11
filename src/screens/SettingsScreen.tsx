@@ -18,10 +18,10 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { format } from 'date-fns';
-import { colors, spacing, typography } from '../theme';
+import { colors, spacing, typography, getDayTypeDisplayName } from '../theme';
 import { useModal } from '../contexts/ModalContext';
-import { exportAllData, importAllData, clearAllData, loadUserProfile } from '../services/storage';
-import { UserProfile } from '../models/types';
+import { exportAllData, importAllData, clearAllData, loadUserProfile, loadWorkoutPlan } from '../services/storage';
+import { UserProfile, DayType } from '../models/types';
 // FileSystem not needed for basic export
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -32,6 +32,7 @@ export default function SettingsScreen() {
   const { showSuccess, showError, showModal, showConfirm } = useModal();
   const [exporting, setExporting] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [workoutPlan, setWorkoutPlan] = useState<any>(null);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -40,8 +41,12 @@ export default function SettingsScreen() {
   );
 
   const loadProfile = async () => {
-    const profile = await loadUserProfile();
+    const [profile, plan] = await Promise.all([
+      loadUserProfile(),
+      loadWorkoutPlan(),
+    ]);
     setUserProfile(profile);
+    setWorkoutPlan(plan);
   };
 
   const handleExport = async () => {
@@ -92,6 +97,38 @@ export default function SettingsScreen() {
     );
   };
 
+  const handleEditPlan = (dayType: DayType) => {
+    // EditPlan only accepts gym day types, not Outdoor or Rest
+    navigation.navigate('EditPlan', {
+      dayType: dayType as 'Push' | 'Pull' | 'Upper2' | 'Legs' | 'Chest' | 'Back' | 'Shoulders' | 'Arms'
+    });
+  };
+
+  // Get available day types based on training split
+  const getAvailableDayTypes = (): DayType[] => {
+    if (!userProfile) return [];
+
+    if (userProfile.trainingSplit === 'body_part') {
+      return ['Chest', 'Back', 'Shoulders', 'Arms', 'Legs'];
+    } else {
+      return ['Push', 'Pull', 'Upper2', 'Legs'];
+    }
+  };
+
+  const getDayTypeColor = (dayType: DayType): string => {
+    switch (dayType) {
+      case 'Push': return colors.dayPush;
+      case 'Pull': return colors.dayPull;
+      case 'Upper2': return colors.dayUpper;
+      case 'Legs': return colors.dayLegs;
+      case 'Chest': return colors.dayChest;
+      case 'Back': return colors.dayBack;
+      case 'Shoulders': return colors.dayShoulders;
+      case 'Arms': return colors.dayArms;
+      default: return colors.primary;
+    }
+  };
+
   return (
     <ScrollView
       style={styles.container}
@@ -129,6 +166,66 @@ export default function SettingsScreen() {
             Restore data from a backup file
           </Text>
         </TouchableOpacity>
+      </View>
+
+      {/* Weekly Schedule */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Weekly Schedule</Text>
+        <TouchableOpacity
+          style={styles.scheduleButton}
+          onPress={() => navigation.navigate('EditWeeklySchedule')}
+        >
+          <View style={styles.scheduleButtonContent}>
+            <View style={styles.iconContainer}>
+              <Text style={styles.iconText}>📆</Text>
+            </View>
+            <View style={styles.scheduleButtonText}>
+              <Text style={styles.scheduleButtonTitle}>Edit Weekly Schedule</Text>
+              <Text style={styles.scheduleButtonSubtitle}>
+                Change which workout types are scheduled for each day of the week
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.scheduleButtonArrow}>›</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Edit Workout Plans */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Edit Workout Plans</Text>
+        <Text style={styles.sectionSubtitle}>
+          Customize exercises, sets, and reps for each day type
+        </Text>
+
+        {userProfile ? (
+          <>
+            {getAvailableDayTypes().map((dayType) => {
+              const exerciseCount = workoutPlan?.plans[dayType]?.exercises?.length || 0;
+              return (
+                <TouchableOpacity
+                  key={dayType}
+                  style={styles.planButton}
+                  onPress={() => handleEditPlan(dayType)}
+                >
+                  <View style={styles.planButtonLeft}>
+                    <View style={[styles.dayTypeIndicator, { backgroundColor: getDayTypeColor(dayType) }]} />
+                    <View>
+                      <Text style={styles.planButtonText}>{getDayTypeDisplayName(dayType)} Day</Text>
+                      <Text style={styles.planButtonSubtext}>
+                        {exerciseCount} exercise{exerciseCount !== 1 ? 's' : ''}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.planButtonArrow}>›</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </>
+        ) : (
+          <Text style={styles.noProfileText}>
+            Complete profile setup to edit workout plans
+          </Text>
+        )}
       </View>
 
       {/* About */}
@@ -366,5 +463,86 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     textAlign: 'center',
     padding: spacing.md,
+  },
+  planButton: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: spacing.lg,
+    marginBottom: spacing.sm,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  planButtonLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    flex: 1,
+  },
+  dayTypeIndicator: {
+    width: 4,
+    height: 48,
+    borderRadius: 2,
+  },
+  planButtonText: {
+    fontSize: typography.fontSize.lg,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs / 2,
+  },
+  planButtonSubtext: {
+    fontSize: typography.fontSize.sm,
+    color: colors.textSecondary,
+  },
+  planButtonArrow: {
+    fontSize: typography.fontSize['2xl'],
+    color: colors.textSecondary,
+    fontWeight: typography.fontWeight.bold,
+  },
+  scheduleButton: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: spacing.lg,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.primary + '30',
+  },
+  scheduleButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    flex: 1,
+  },
+  scheduleButtonText: {
+    flex: 1,
+  },
+  scheduleButtonTitle: {
+    fontSize: typography.fontSize.lg,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs / 2,
+  },
+  scheduleButtonSubtitle: {
+    fontSize: typography.fontSize.sm,
+    color: colors.textSecondary,
+    lineHeight: typography.fontSize.sm * 1.4,
+  },
+  scheduleButtonArrow: {
+    fontSize: typography.fontSize['2xl'],
+    color: colors.textSecondary,
+    fontWeight: typography.fontWeight.bold,
+  },
+  iconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.primary + '10',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  iconText: {
+    fontSize: 24,
   },
 });

@@ -195,6 +195,46 @@ export function getOutdoorExercises(exercises: Exercise[]): Exercise[] {
 }
 
 /**
+ * Get stretch exercises for a specific day type
+ */
+export function getStretchExercises(
+  exercises: Exercise[],
+  dayType: 'Push' | 'Pull' | 'Upper2' | 'Legs' | 'Chest' | 'Back' | 'Shoulders' | 'Arms' | 'Outdoor'
+): Exercise[] {
+  // Filter exercises that have "stretch" in the name
+  const allStretches = exercises.filter(ex =>
+    ex.name.toLowerCase().includes('stretch')
+  );
+
+  // Map day types to relevant body parts for stretching
+  const bodyPartMapping: Record<string, string[]> = {
+    Push: ['chest', 'shoulders', 'arms'],
+    Pull: ['back', 'arms'],
+    Upper2: ['chest', 'back', 'shoulders', 'arms'],
+    Legs: ['legs'],
+    Chest: ['chest', 'shoulders'],
+    Back: ['back', 'arms'],
+    Shoulders: ['shoulders', 'arms'],
+    Arms: ['arms'],
+    Outdoor: ['legs', 'core'],
+  };
+
+  const relevantBodyParts = bodyPartMapping[dayType] || [];
+
+  // Filter stretches by relevant body parts
+  const relevantStretches = allStretches.filter(ex =>
+    relevantBodyParts.some(part =>
+      ex.bodyPart.toLowerCase().includes(part) ||
+      ex.target.toLowerCase().includes(part) ||
+      ex.name.toLowerCase().includes(part)
+    )
+  );
+
+  // Limit to 5-8 stretches per session
+  return relevantStretches.slice(0, 6);
+}
+
+/**
  * Search exercises by name
  */
 export function searchExercises(exercises: Exercise[], query: string): Exercise[] {

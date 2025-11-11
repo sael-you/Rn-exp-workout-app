@@ -34,6 +34,7 @@ export default function ProfileSetupScreen({ navigation }: Props) {
   const [injuryText, setInjuryText] = useState('');
   const [mobilityIssuesText, setMobilityIssuesText] = useState('');
   const [workoutLocation, setWorkoutLocation] = useState<'gym' | 'home'>('gym');
+  const [availableEquipment, setAvailableEquipment] = useState<string[]>(['Bodyweight']);
   const [weeklyFrequency, setWeeklyFrequency] = useState(3);
 
   // Auto-adjust frequency when switching to body part split
@@ -47,14 +48,37 @@ export default function ProfileSetupScreen({ navigation }: Props) {
   const [outdoorDayPreference, setOutdoorDayPreference] = useState<number>(0); // Sunday by default
   const [generating, setGenerating] = useState(false);
 
+  // Calculate total steps (8 if home, 7 if gym)
+  const totalSteps = workoutLocation === 'home' ? 8 : 7;
+
+  const toggleEquipment = (equipment: string) => {
+    setAvailableEquipment((prev) =>
+      prev.includes(equipment)
+        ? prev.filter((e) => e !== equipment)
+        : [...prev, equipment]
+    );
+  };
+
   const handleNext = () => {
+    // Skip equipment step if gym workout
+    if (step === 5 && workoutLocation === 'gym') {
+      setStep(7); // Skip to frequency step
+      return;
+    }
+
+    // Validate equipment selection for home workouts
+    if (step === 6 && workoutLocation === 'home' && availableEquipment.length === 0) {
+      showError('No Equipment Selected', 'Please select at least Bodyweight or one equipment type you have available.');
+      return;
+    }
+
     // Validate frequency for body part split
-    if (step === 6 && trainingSplit === 'body_part' && weeklyFrequency < 4) {
+    if (step === 7 && trainingSplit === 'body_part' && weeklyFrequency < 4) {
       showError('Frequency Too Low', 'Body part splits require at least 4 days per week to train all muscles effectively. Please choose 4+ days or switch to Muscle Group Training.');
       return;
     }
 
-    if (step < 7) {
+    if (step < totalSteps) {
       setStep(step + 1);
     } else {
       handleGenerateProgram();
@@ -62,6 +86,12 @@ export default function ProfileSetupScreen({ navigation }: Props) {
   };
 
   const handleBack = () => {
+    // Skip equipment step when going back if gym workout
+    if (step === 7 && workoutLocation === 'gym') {
+      setStep(5); // Go back to location step
+      return;
+    }
+
     if (step > 1) {
       setStep(step - 1);
     }
@@ -100,6 +130,7 @@ export default function ProfileSetupScreen({ navigation }: Props) {
         injuries: injuries.length > 0 ? injuries : undefined,
         mobilityIssues: mobilityIssues.length > 0 ? mobilityIssues : undefined,
         workoutLocation,
+        availableEquipment: workoutLocation === 'home' ? availableEquipment : undefined,
         weeklyFrequency,
         legTrainingPreference,
         outdoorDayPreference: includeOutdoor ? outdoorDayPreference : undefined,
@@ -373,7 +404,7 @@ export default function ProfileSetupScreen({ navigation }: Props) {
     <View style={styles.container}>
       {/* Progress Indicator */}
       <View style={styles.progressContainer}>
-        {[1, 2, 3, 4, 5, 6, 7].map((s) => (
+        {Array.from({ length: totalSteps }, (_, i) => i + 1).map((s) => (
           <View
             key={s}
             style={[styles.progressDot, step >= s && styles.progressDotActive]}
@@ -580,14 +611,59 @@ export default function ProfileSetupScreen({ navigation }: Props) {
             >
               <Text style={styles.optionTitle}>🏠 Home Workout</Text>
               <Text style={styles.optionDescription}>
-                Bodyweight, dumbbells, resistance bands, minimal equipment
+                Limited equipment - select what you have in the next step
               </Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {/* Step 6: Weekly Frequency & Leg Training */}
-        {step === 6 && (
+        {/* Step 6: Available Equipment (Home Only) */}
+        {step === 6 && workoutLocation === 'home' && (
+          <View>
+            <Text style={styles.title}>What equipment do you have?</Text>
+            <Text style={styles.subtitle}>
+              Select all that apply. We'll only include exercises using your available equipment.
+            </Text>
+
+            <View style={styles.equipmentGrid}>
+              {[
+                'Bodyweight',
+                'Dumbbells',
+                'Resistance Bands',
+                'Pull-up Bar',
+                'Bench',
+                'Kettlebells',
+                'Barbell',
+                'Adjustable Weights',
+              ].map((equip) => (
+                <TouchableOpacity
+                  key={equip}
+                  style={[
+                    styles.equipmentChip,
+                    availableEquipment.includes(equip) && styles.equipmentChipActive,
+                  ]}
+                  onPress={() => toggleEquipment(equip)}
+                >
+                  <Text
+                    style={[
+                      styles.equipmentChipText,
+                      availableEquipment.includes(equip) && styles.equipmentChipTextActive,
+                    ]}
+                  >
+                    {equip}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.equipmentNote}>
+              Selected: {availableEquipment.length > 0 ? availableEquipment.join(', ') : 'None'}
+            </Text>
+          </View>
+        )}
+
+        {/* Step 7: Weekly Frequency & Leg Training */}
+        {step === 7 && (
           <View>
             <Text style={styles.title}>Training frequency & leg focus</Text>
             <Text style={styles.subtitle}>
@@ -660,8 +736,8 @@ export default function ProfileSetupScreen({ navigation }: Props) {
           </View>
         )}
 
-        {/* Step 7: Outdoor Day Preference */}
-        {step === 7 && (
+        {/* Step 8: Outdoor Day Preference */}
+        {step === 8 && (
           <View>
             <Text style={styles.title}>Outdoor training day</Text>
             <Text style={styles.subtitle}>
@@ -730,7 +806,7 @@ export default function ProfileSetupScreen({ navigation }: Props) {
           onPress={handleNext}
         >
           <Text style={styles.nextButtonText}>
-            {step === 7 ? 'Generate Program' : 'Next'}
+            {step === totalSteps ? 'Generate Program' : 'Next'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -969,5 +1045,43 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     lineHeight: typography.fontSize.sm * 1.5,
     textAlign: 'center',
+  },
+  equipmentGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+    justifyContent: 'flex-start',
+  },
+  equipmentChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 20,
+    backgroundColor: colors.gray100,
+    borderWidth: 1.5,
+    borderColor: colors.gray300,
+    minHeight: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  equipmentChipActive: {
+    backgroundColor: colors.success,
+    borderColor: colors.success,
+  },
+  equipmentChipText: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.medium,
+    color: colors.textPrimary,
+  },
+  equipmentChipTextActive: {
+    color: colors.white,
+    fontWeight: typography.fontWeight.bold,
+  },
+  equipmentNote: {
+    fontSize: typography.fontSize.sm,
+    color: colors.textSecondary,
+    fontStyle: 'italic',
+    marginTop: spacing.md,
+    lineHeight: typography.fontSize.sm * 1.5,
   },
 });

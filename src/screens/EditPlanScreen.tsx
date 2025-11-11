@@ -16,8 +16,9 @@ import {
   FlatList,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { colors, spacing, typography } from '../theme';
+import { colors, spacing, typography, getDayTypeDisplayName } from '../theme';
 import { useModal } from '../contexts/ModalContext';
 import {
   WorkoutPlan,
@@ -35,12 +36,15 @@ type Props = NativeStackScreenProps<RootStackParamList, 'EditPlan'>;
 export default function EditPlanScreen({ route, navigation }: Props) {
   const { dayType } = route.params;
   const { showModal, showConfirm } = useModal();
+  const insets = useSafeAreaInsets();
 
   const [plan, setPlan] = useState<WorkoutPlan | null>(null);
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [plannedExercises, setPlannedExercises] = useState<PlannedExercise[]>([]);
   const [showExercisePicker, setShowExercisePicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterDayType, setFilterDayType] = useState<typeof dayType | 'All'>(dayType);
+  const [selectedEquipment, setSelectedEquipment] = useState<string[]>([]);
   const [editingExerciseId, setEditingExerciseId] = useState<string | null>(null);
   const [editSets, setEditSets] = useState('');
   const [editRepMin, setEditRepMin] = useState('');
@@ -49,6 +53,16 @@ export default function EditPlanScreen({ route, navigation }: Props) {
   useEffect(() => {
     loadPlanData();
   }, []);
+
+  useEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity onPress={handleSavePlan} style={styles.headerButton}>
+          <Text style={styles.headerButtonText}>Save</Text>
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation, plannedExercises]);
 
   const loadPlanData = async () => {
     try {
@@ -60,7 +74,7 @@ export default function EditPlanScreen({ route, navigation }: Props) {
       if (workoutPlan && catalog) {
         setPlan(workoutPlan);
         setExercises(catalog.exercises);
-        setPlannedExercises(workoutPlan.plans[dayType].exercises);
+        setPlannedExercises(workoutPlan.plans[dayType]?.exercises || []);
       }
     } catch (error) {
       console.error('Error loading plan:', error);
@@ -79,6 +93,7 @@ export default function EditPlanScreen({ route, navigation }: Props) {
     setPlannedExercises([...plannedExercises, newPlannedExercise]);
     setShowExercisePicker(false);
     setSearchQuery('');
+    setFilterDayType(dayType); // Reset to current day type
   };
 
   const handleRemoveExercise = (exerciseId: string) => {
@@ -167,26 +182,87 @@ export default function EditPlanScreen({ route, navigation }: Props) {
     return exercises.find((ex) => ex.id === id);
   };
 
+  const toggleEquipment = (equipment: string) => {
+    setSelectedEquipment((prev) =>
+      prev.includes(equipment)
+        ? prev.filter((e) => e !== equipment)
+        : [...prev, equipment]
+    );
+  };
+
+  const getBodyPartsForDayType = (dt: typeof dayType | 'All'): string[] => {
+    if (dt === 'All') return [];
+
+    const mapping: Record<string, string[]> = {
+      // Muscle group split
+      Push: ['chest', 'shoulders', 'triceps'],
+      Pull: ['back', 'lats', 'biceps'],
+      Upper2: ['chest', 'shoulders', 'triceps', 'back', 'lats', 'biceps', 'forearms', 'traps', 'abs'],
+      // Body part split
+      Chest: ['chest', 'pectorals'],
+      Back: ['back', 'lats', 'traps'],
+      Shoulders: ['shoulders', 'delts'],
+      Arms: ['biceps', 'triceps', 'forearms'],
+      // Common
+      Legs: ['quads', 'hamstrings', 'glutes', 'calves', 'adductors', 'abductors'],
+    };
+
+    return mapping[dt] || [];
+  };
+
+  // Sort equipment list: selected items first
+  const sortedEquipment = React.useMemo(() => {
+    const allEquipment = [
+      'Barbell',
+      'Dumbbell',
+      'Machine',
+      'Cable',
+      'Bodyweight',
+      'Kettlebell',
+      'Bands',
+      'E-Z Curl Bar',
+    ];
+
+    const selected = allEquipment.filter(eq => selectedEquipment.includes(eq));
+    const unselected = allEquipment.filter(eq => !selectedEquipment.includes(eq));
+
+    return [...selected, ...unselected];
+  }, [selectedEquipment]);
+
   const filteredExercises = exercises.filter((ex) => {
+    // Text search filter
     const query = searchQuery.toLowerCase();
-    return (
+    const matchesSearch = !query || (
       ex.name.toLowerCase().includes(query) ||
       ex.target.toLowerCase().includes(query) ||
       ex.bodyPart.toLowerCase().includes(query)
     );
+
+    // Day type filter
+    const matchesDayType = filterDayType === 'All' ? true : (() => {
+      const relevantBodyParts = getBodyPartsForDayType(filterDayType);
+      return relevantBodyParts.some(
+        (part) =>
+          ex.bodyPart.toLowerCase().includes(part) ||
+          ex.target.toLowerCase().includes(part)
+      );
+    })();
+
+    // Equipment filter
+    const matchesEquipment = selectedEquipment.length === 0 ||
+      selectedEquipment.some((equip) =>
+        ex.equipment.toLowerCase().includes(equip.toLowerCase())
+      );
+
+    return matchesSearch && matchesDayType && matchesEquipment;
   });
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Edit {dayType} Day</Text>
-        <TouchableOpacity style={styles.saveButton} onPress={handleSavePlan}>
-          <Text style={styles.saveButtonText}>Save</Text>
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView style={styles.content}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={{ padding: spacing.md, paddingBottom: insets.bottom + spacing.xl }}
+      >
         {/* Planned Exercises */}
         {plannedExercises.map((pe, index) => {
           const exercise = getExerciseById(pe.exerciseId);
@@ -320,14 +396,104 @@ export default function EditPlanScreen({ route, navigation }: Props) {
       <Modal
         visible={showExercisePicker}
         animationType="slide"
-        onRequestClose={() => setShowExercisePicker(false)}
+        onRequestClose={() => {
+          setShowExercisePicker(false);
+          setSearchQuery('');
+          setFilterDayType(dayType);
+          setSelectedEquipment([]);
+        }}
       >
-        <View style={styles.modalContainer}>
+        <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Select Exercise</Text>
-            <TouchableOpacity onPress={() => setShowExercisePicker(false)}>
+            <TouchableOpacity
+              onPress={() => {
+                setShowExercisePicker(false);
+                setSearchQuery('');
+                setFilterDayType(dayType);
+                setSelectedEquipment([]);
+              }}
+            >
               <Text style={styles.modalClose}>✕</Text>
             </TouchableOpacity>
+          </View>
+
+          {/* Equipment Filters */}
+          <View style={[styles.equipmentFilterSection, styles.firstFilterSection]}>
+            <Text style={styles.filterSectionTitle}>Equipment</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.filterScroll}
+              contentContainerStyle={styles.filterContainer}
+            >
+              {sortedEquipment.map((equip) => (
+                <TouchableOpacity
+                  key={equip}
+                  style={[
+                    styles.equipmentChip,
+                    selectedEquipment.includes(equip) && styles.equipmentChipActive,
+                  ]}
+                  onPress={() => toggleEquipment(equip)}
+                >
+                  <Text
+                    style={[
+                      styles.equipmentChipText,
+                      selectedEquipment.includes(equip) && styles.equipmentChipTextActive,
+                    ]}
+                  >
+                    {equip}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+
+          {/* Day Type Filters */}
+          <View style={styles.dayTypeFilterSection}>
+            <Text style={styles.filterSectionTitle}>Category</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.filterScroll}
+              contentContainerStyle={styles.filterContainer}
+            >
+              <TouchableOpacity
+                style={[
+                  styles.filterChip,
+                  filterDayType === 'All' && styles.filterChipActive,
+                ]}
+                onPress={() => setFilterDayType('All')}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    filterDayType === 'All' && styles.filterChipTextActive,
+                  ]}
+                >
+                  All
+                </Text>
+              </TouchableOpacity>
+              {['Push', 'Pull', 'Upper2', 'Legs', 'Chest', 'Back', 'Shoulders', 'Arms'].map((dt) => (
+                <TouchableOpacity
+                  key={dt}
+                  style={[
+                    styles.filterChip,
+                    filterDayType === dt && styles.filterChipActive,
+                  ]}
+                  onPress={() => setFilterDayType(dt as typeof dayType)}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      filterDayType === dt && styles.filterChipTextActive,
+                    ]}
+                  >
+                    {getDayTypeDisplayName(dt)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
 
           <TextInput
@@ -361,6 +527,7 @@ export default function EditPlanScreen({ route, navigation }: Props) {
                 </View>
               </TouchableOpacity>
             )}
+            contentContainerStyle={{ paddingBottom: insets.bottom + spacing.lg }}
             initialNumToRender={20}
             maxToRenderPerBatch={10}
             windowSize={5}
@@ -377,33 +544,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.gray200,
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.textPrimary,
-  },
-  saveButton: {
-    backgroundColor: colors.primary,
+  headerButton: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    borderRadius: 8,
   },
-  saveButtonText: {
-    color: colors.white,
+  headerButtonText: {
+    color: colors.primary,
     fontSize: typography.fontSize.base,
     fontWeight: typography.fontWeight.semibold,
-  },
-  content: {
-    flex: 1,
-    padding: spacing.md,
   },
   exerciseCard: {
     backgroundColor: colors.surface,
@@ -557,7 +705,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.gray200,
   },
   modalTitle: {
-    fontSize: typography.fontSize.xl,
+    fontSize: typography.fontSize.lg,
     fontWeight: typography.fontWeight.bold,
     color: colors.textPrimary,
   },
@@ -566,11 +714,48 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontWeight: typography.fontWeight.bold,
   },
+  filterScroll: {
+    flexGrow: 0,
+    flexShrink: 0,
+    marginBottom: spacing.sm,
+  },
+  filterContainer: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  filterChip: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: 20,
+    backgroundColor: colors.gray100,
+    borderWidth: 1.5,
+    borderColor: colors.gray300,
+    minHeight: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  filterChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+    borderWidth: 1.5,
+  },
+  filterChipText: {
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.textPrimary,
+  },
+  filterChipTextActive: {
+    color: colors.white,
+    fontWeight: typography.fontWeight.bold,
+  },
   searchInput: {
     backgroundColor: colors.gray100,
     borderRadius: 8,
     padding: spacing.md,
-    margin: spacing.md,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
     fontSize: typography.fontSize.base,
     color: colors.textPrimary,
   },
@@ -604,5 +789,47 @@ const styles = StyleSheet.create({
     fontSize: typography.fontSize.sm,
     color: colors.textSecondary,
     textTransform: 'capitalize',
+  },
+  equipmentFilterSection: {
+    marginBottom: spacing.sm,
+  },
+  firstFilterSection: {
+    marginTop: spacing.lg,
+  },
+  dayTypeFilterSection: {
+    marginBottom: spacing.sm,
+  },
+  filterSectionTitle: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.textSecondary,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.xs,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  equipmentChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 20,
+    backgroundColor: colors.gray100,
+    borderWidth: 1.5,
+    borderColor: colors.gray300,
+    minHeight: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  equipmentChipActive: {
+    backgroundColor: colors.success,
+    borderColor: colors.success,
+  },
+  equipmentChipText: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.medium,
+    color: colors.textPrimary,
+  },
+  equipmentChipTextActive: {
+    color: colors.white,
+    fontWeight: typography.fontWeight.bold,
   },
 });

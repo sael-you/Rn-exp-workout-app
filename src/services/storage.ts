@@ -375,6 +375,71 @@ export async function loadMonthlySchedule(): Promise<DaySchedule[]> {
 }
 
 // ============================================================================
+// Bulk Session Updates
+// ============================================================================
+
+/**
+ * Replace an exercise across all gym sessions
+ * Useful for correcting data or switching exercises
+ */
+export async function bulkReplaceExercise(oldExerciseId: string, newExerciseId: string): Promise<number> {
+  const sessions = await loadGymSessions();
+  let updatedCount = 0;
+
+  const updatedSessions = sessions.map((session) => {
+    let sessionModified = false;
+    const updatedExercises = session.exercises.map((ex) => {
+      if (ex.exerciseId === oldExerciseId) {
+        sessionModified = true;
+        return {
+          ...ex,
+          exerciseId: newExerciseId,
+        };
+      }
+      return ex;
+    });
+
+    if (sessionModified) {
+      updatedCount++;
+      return {
+        ...session,
+        exercises: updatedExercises,
+      };
+    }
+    return session;
+  });
+
+  await setItem(KEYS.GYM_SESSIONS, updatedSessions);
+  return updatedCount;
+}
+
+/**
+ * Delete an exercise from all gym sessions
+ * Useful for removing exercises that are no longer relevant
+ */
+export async function bulkDeleteExercise(exerciseId: string): Promise<number> {
+  const sessions = await loadGymSessions();
+  let updatedCount = 0;
+
+  const updatedSessions = sessions.map((session) => {
+    const originalLength = session.exercises.length;
+    const filteredExercises = session.exercises.filter((ex) => ex.exerciseId !== exerciseId);
+
+    if (filteredExercises.length < originalLength) {
+      updatedCount++;
+      return {
+        ...session,
+        exercises: filteredExercises,
+      };
+    }
+    return session;
+  });
+
+  await setItem(KEYS.GYM_SESSIONS, updatedSessions);
+  return updatedCount;
+}
+
+// ============================================================================
 // Clear all data (for testing/reset)
 // ============================================================================
 

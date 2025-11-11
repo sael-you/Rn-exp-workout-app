@@ -31,6 +31,7 @@ import {
   loadWorkoutPlan,
   saveWorkoutPlan,
   loadMonthlySchedule,
+  saveMonthlySchedule,
   loadGymSessions,
   loadOutdoorSessions,
   loadUserProfile,
@@ -63,6 +64,8 @@ export default function HomeScreen() {
   const [workoutPlan, setWorkoutPlan] = useState<any>(null);
   const [exerciseCatalog, setExerciseCatalog] = useState<Exercise[]>([]);
   const [trainingSplit, setTrainingSplit] = useState<'muscle_group' | 'body_part'>('muscle_group');
+  const [isTodayCompleted, setIsTodayCompleted] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   useEffect(() => {
     initializeApp();
@@ -70,13 +73,14 @@ export default function HomeScreen() {
 
   useEffect(() => {
     loadScheduleForMonth();
-  }, [currentMonth]);
+    reloadWorkoutPlan();
+  }, [currentMonth, refreshTrigger]);
 
-  // Reload schedule when screen comes into focus (e.g., after completing ProfileSetup)
+  // Reload schedule and workout plan when screen comes into focus
   useFocusEffect(
     React.useCallback(() => {
-      loadScheduleForMonth();
-    }, [currentMonth])
+      setRefreshTrigger(prev => prev + 1);
+    }, [])
   );
 
   const loadScheduleForMonth = async () => {
@@ -136,6 +140,35 @@ export default function HomeScreen() {
     });
 
     setSchedule(monthSchedule);
+
+    // Check if today's session is completed
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const todaySchedule = monthSchedule.find((s) => s.date === today);
+    setIsTodayCompleted(todaySchedule?.completed || false);
+  };
+
+  const reloadWorkoutPlan = async () => {
+    try {
+      // Reload workout plan from storage
+      const plan = await loadWorkoutPlan();
+      if (plan) {
+        setWorkoutPlan(plan);
+
+        // Reload today's exercises if it's a workout day
+        if (todayType !== 'Rest' && todayType !== 'Outdoor' && exerciseCatalog.length > 0) {
+          const dayPlan = plan.plans[todayType as keyof typeof plan.plans];
+          if (dayPlan) {
+            const dayExercises = dayPlan.exercises
+              .sort((a: any, b: any) => a.order - b.order)
+              .map((pe: any) => exerciseCatalog.find((ex) => ex.id === pe.exerciseId))
+              .filter(Boolean) as Exercise[];
+            setTodayExercises(dayExercises);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error reloading workout plan:', error);
+    }
   };
 
   const initializeApp = async () => {
@@ -302,15 +335,40 @@ export default function HomeScreen() {
   const handleChangeDayType = async (newType: DayType) => {
     if (!selectedDay) return;
 
-    const { saveMonthlySchedule } = require('../services/storage');
-    const updatedSchedule = schedule.map((day) =>
-      day.date === selectedDay ? { ...day, dayType: newType } : day
-    );
+    try {
+      // Load existing saved custom schedule (not the full generated schedule)
+      const savedSchedule = await loadMonthlySchedule();
 
-    setSchedule(updatedSchedule);
-    await saveMonthlySchedule(updatedSchedule);
-    setSelectedDay(null);
-    setViewMode('calendar');
+      // Find if this day already exists in saved custom days
+      const existingDayIndex = savedSchedule.findIndex((day) => day.date === selectedDay);
+
+      if (existingDayIndex >= 0) {
+        // Update existing saved day
+        savedSchedule[existingDayIndex] = {
+          ...savedSchedule[existingDayIndex],
+          dayType: newType,
+        };
+      } else {
+        // Add new custom day to saved schedule
+        savedSchedule.push({
+          date: selectedDay,
+          dayType: newType,
+          completed: false, // Will be recalculated on reload
+        });
+      }
+
+      // Save only the custom days (not the entire generated schedule)
+      await saveMonthlySchedule(savedSchedule);
+
+      // Close modal first for better UX
+      setSelectedDay(null);
+      setViewMode('calendar');
+
+      // Trigger refresh to reload calendar
+      setRefreshTrigger(prev => prev + 1);
+    } catch (error) {
+      console.error('Error changing day type:', error);
+    }
   };
 
   const handleCloseModal = () => {
@@ -576,7 +634,7 @@ export default function HomeScreen() {
       <View style={styles.modalOverlay}>
         <View style={styles.actionModal}>
           <Text style={styles.modalTitle}>
-            {format(new Date(selectedDay), 'MMMM d')} - {daySchedule.dayType} Day
+            {format(new Date(selectedDay), 'MMMM d')} - {getDayTypeDisplayName(daySchedule.dayType)} Day
           </Text>
 
           <TouchableOpacity
@@ -616,6 +674,11 @@ export default function HomeScreen() {
     const daySchedule = schedule.find((s) => s.date === selectedDay);
     if (!daySchedule) return null;
 
+    // Get available day types based on training split
+    const availableDayTypes: DayType[] = trainingSplit === 'body_part'
+      ? ['Chest', 'Back', 'Shoulders', 'Arms', 'Legs', 'Outdoor', 'Rest']
+      : ['Push', 'Pull', 'Upper2', 'Legs', 'Outdoor', 'Rest'];
+
     return (
       <View style={styles.modalOverlay}>
         <View style={styles.dayTypeSelector}>
@@ -623,7 +686,7 @@ export default function HomeScreen() {
             Change {format(new Date(selectedDay), 'MMM d')} to:
           </Text>
           <View style={styles.dayTypeButtons}>
-            {(['Push', 'Pull', 'Upper2', 'Outdoor', 'Rest'] as DayType[]).map((type) => (
+            {availableDayTypes.map((type) => (
               <TouchableOpacity
                 key={type}
                 style={[
@@ -639,7 +702,7 @@ export default function HomeScreen() {
                     daySchedule.dayType === type && styles.dayTypeButtonTextSelected,
                   ]}
                 >
-                  {type}
+                  {getDayTypeDisplayName(type)}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -766,6 +829,11 @@ export default function HomeScreen() {
           </Text>
         ) : (
           <>
+            {isTodayCompleted && (
+              <View style={styles.completedBanner}>
+                <Text style={styles.completedText}>✓ Completed</Text>
+              </View>
+            )}
             <Text style={styles.dayCardDescription}>
               {getDayDescription(todayType)}
             </Text>
@@ -778,11 +846,13 @@ export default function HomeScreen() {
                 <Text style={styles.viewPlanButtonText}>View Plan</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.actionButton, styles.startButton]}
+                style={[styles.actionButton, isTodayCompleted ? styles.redoButton : styles.startButton]}
                 onPress={handleStartSession}
                 activeOpacity={0.8}
               >
-                <Text style={styles.startButtonText}>Start Session</Text>
+                <Text style={styles.startButtonText}>
+                  {isTodayCompleted ? 'Redo Session' : 'Start Session'}
+                </Text>
               </TouchableOpacity>
             </View>
           </>
@@ -796,26 +866,27 @@ export default function HomeScreen() {
         {renderStats()}
       </View>
 
-      {/* Streaks Section */}
-      {streaks && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Your Streaks</Text>
-          <View style={styles.streaksContainer}>
-            <StreakChip
-              label="Training"
-              current={streaks.training.current}
-              unit="weeks"
-              color={colors.primary}
-            />
-            <StreakChip
-              label="Outdoor"
-              current={streaks.outdoor.current}
-              unit="weeks"
-              color={colors.dayOutdoor}
-            />
+      {/* Session History */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Training History</Text>
+        <TouchableOpacity
+          style={styles.historyButton}
+          onPress={() => navigation.navigate('SessionHistory')}
+        >
+          <View style={styles.historyButtonContent}>
+            <View style={styles.iconContainer}>
+              <Text style={styles.iconText}>📅</Text>
+            </View>
+            <View style={styles.historyButtonText}>
+              <Text style={styles.historyButtonTitle}>View Session History</Text>
+              <Text style={styles.historyButtonSubtitle}>
+                Review, edit, and manage your past workouts
+              </Text>
+            </View>
           </View>
-        </View>
-      )}
+          <Text style={styles.historyButtonArrow}>›</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Exercise Plan Preview Modal */}
       <Modal
@@ -855,7 +926,7 @@ export default function HomeScreen() {
               }}
             >
               <Text style={[styles.modalButtonText, { color: colors.white }]}>
-                Start Workout
+                {isTodayCompleted ? 'Redo Workout' : 'Start Workout'}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -986,6 +1057,19 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginBottom: spacing.md,
   },
+  completedBanner: {
+    backgroundColor: colors.success + '20',
+    borderRadius: 8,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    marginBottom: spacing.sm,
+    alignSelf: 'flex-start',
+  },
+  completedText: {
+    fontSize: typography.fontSize.sm,
+    color: colors.success,
+    fontWeight: typography.fontWeight.bold,
+  },
   restMessage: {
     fontSize: typography.fontSize.base,
     color: colors.textSecondary,
@@ -1012,6 +1096,9 @@ const styles = StyleSheet.create({
   },
   startButton: {
     backgroundColor: colors.primary,
+  },
+  redoButton: {
+    backgroundColor: colors.warning,
   },
   startButtonText: {
     color: colors.white,
@@ -1474,5 +1561,51 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: typography.fontSize.base * 1.5,
+  },
+  historyButton: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: spacing.lg,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.primary + '30',
+  },
+  historyButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    flex: 1,
+  },
+  iconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.primary + '10',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  iconText: {
+    fontSize: 24,
+  },
+  historyButtonText: {
+    flex: 1,
+  },
+  historyButtonTitle: {
+    fontSize: typography.fontSize.lg,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs / 2,
+  },
+  historyButtonSubtitle: {
+    fontSize: typography.fontSize.sm,
+    color: colors.textSecondary,
+    lineHeight: typography.fontSize.sm * 1.4,
+  },
+  historyButtonArrow: {
+    fontSize: typography.fontSize['2xl'],
+    color: colors.textSecondary,
+    fontWeight: typography.fontWeight.bold,
   },
 });

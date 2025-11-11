@@ -13,7 +13,11 @@ import {
   TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { format, startOfWeek, endOfWeek } from 'date-fns';
+import { Ionicons } from '@expo/vector-icons';
+import { RootStackParamList } from '../navigation/AppNavigator';
 import { colors, spacing, typography } from '../theme';
 import {
   loadGymSessions,
@@ -27,7 +31,10 @@ import {
   getMotivationalMessage,
 } from '../services/geminiAI';
 
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
 export default function ProgressScreen() {
+  const navigation = useNavigation<NavigationProp>();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [weeklySummary, setWeeklySummary] = useState<WeeklySummary | null>(null);
@@ -196,6 +203,23 @@ export default function ProgressScreen() {
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
       }
     >
+      {/* Session History Button */}
+      <TouchableOpacity
+        style={styles.historyButton}
+        onPress={() => navigation.navigate('SessionHistory')}
+      >
+        <View style={styles.historyButtonContent}>
+          <Ionicons name="calendar" size={24} color={colors.primary} />
+          <View style={styles.historyButtonText}>
+            <Text style={styles.historyButtonTitle}>View Session History</Text>
+            <Text style={styles.historyButtonSubtitle}>
+              Review, edit, and manage your past workouts
+            </Text>
+          </View>
+        </View>
+        <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
+      </TouchableOpacity>
+
       {/* Weekly Summary Card */}
       <View style={styles.card}>
         <Text style={styles.cardTitle}>This Week</Text>
@@ -461,5 +485,36 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontStyle: 'italic',
     textAlign: 'center',
+  },
+  historyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  historyButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: spacing.md,
+  },
+  historyButtonText: {
+    flex: 1,
+  },
+  historyButtonTitle: {
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs / 2,
+  },
+  historyButtonSubtitle: {
+    fontSize: typography.fontSize.sm,
+    color: colors.textSecondary,
+    lineHeight: typography.fontSize.sm * 1.4,
   },
 });

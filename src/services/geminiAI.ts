@@ -554,11 +554,34 @@ export async function generateWorkoutProgram(
   );
 
   // Filter by equipment based on workout location
-  if (userProfile.workoutLocation === 'home') {
-    const homeEquipment = ['body weight', 'dumbbell', 'resistance band', 'kettlebell', 'ez barbell'];
+  if (userProfile.workoutLocation === 'home' && userProfile.availableEquipment) {
+    // Map user-friendly equipment names to database equipment strings
+    const equipmentMapping: Record<string, string[]> = {
+      'Bodyweight': ['bodyweight', 'body only', 'assisted', 'leverage'], // Bodyweight exercises in DB
+      'Dumbbells': ['dumbbell'],
+      'Resistance Bands': ['band', 'resistance band'],
+      'Pull-up Bar': ['leverage', 'assisted'], // Pull-up bar and assisted exercises
+      'Bench': ['bench'], // Will match exercises that use bench in equipment field
+      'Kettlebells': ['kettlebell'],
+      'Barbell': ['barbell', 'olympic barbell', 'ez barbell', 'ez curl bar'],
+      'Adjustable Weights': ['dumbbell', 'kettlebell'], // Adjustable weights = dumbbells/kettlebells
+    };
+
+    // Build list of allowed equipment strings from user's selections
+    const allowedEquipment: string[] = [];
+    userProfile.availableEquipment.forEach((userEquip) => {
+      const mappedEquipment = equipmentMapping[userEquip];
+      if (mappedEquipment) {
+        allowedEquipment.push(...mappedEquipment);
+      }
+    });
+
+    // Filter exercises to only those using available equipment
     availableExercises = availableExercises.filter((ex) =>
-      homeEquipment.some((equip) => ex.equipment.toLowerCase().includes(equip))
+      allowedEquipment.some((equip) => ex.equipment.toLowerCase().includes(equip))
     );
+
+    console.log(`[AI] Home workout: Filtered to ${availableExercises.length} exercises using: ${userProfile.availableEquipment.join(', ')}`);
   }
 
   // Filter leg exercises based on user preference
@@ -691,7 +714,7 @@ async function generateMuscleGroupProgram(
 USER PROFILE:
 - Primary Goal: ${goal.toUpperCase()} (${goal === 'strength' ? 'maximize 1RM strength' : goal === 'endurance' ? 'muscular endurance & conditioning' : 'muscle hypertrophy & size'})
 - Experience Level: ${experienceLevel}
-- Training Location: ${userProfile.workoutLocation === 'home' ? 'Home (limited equipment)' : 'Gym (full equipment access)'}
+- Training Location: ${userProfile.workoutLocation === 'home' ? `Home workout - ONLY use exercises from the provided list (filtered for available equipment: ${userProfile.availableEquipment?.join(', ') || 'body weight only'})` : 'Gym (full equipment access)'}
 - Leg Training: ${excludeLegsFromGym ? 'EXCLUDED from gym days (user has outdoor leg training)' : userProfile.legTrainingPreference === 'spread' ? 'Spread across all days (1 exercise per day)' : userProfile.legTrainingPreference === 'dedicated' ? 'Dedicated leg day' : 'Upper body focus only'}
 ${userProfile.injuries && userProfile.injuries.length > 0 ? `- Injuries/Limitations: ${userProfile.injuries.map((i) => `${i.bodyPart} (${i.type})`).join(', ')}` : ''}
 ${userProfile.mobilityIssues && userProfile.mobilityIssues.length > 0 ? `- Mobility Issues: ${userProfile.mobilityIssues.join(', ')}` : ''}
@@ -906,7 +929,7 @@ async function generateBodyPartProgram(
 USER PROFILE:
 - Primary Goal: ${goal.toUpperCase()} (${goal === 'strength' ? 'maximize 1RM strength' : goal === 'endurance' ? 'muscular endurance & conditioning' : 'muscle hypertrophy & size'})
 - Experience Level: ${experienceLevel}
-- Training Location: ${userProfile.workoutLocation === 'home' ? 'Home (limited equipment)' : 'Gym (full equipment access)'}
+- Training Location: ${userProfile.workoutLocation === 'home' ? `Home workout - ONLY use exercises from the provided list (filtered for available equipment: ${userProfile.availableEquipment?.join(', ') || 'body weight only'})` : 'Gym (full equipment access)'}
 - Leg Training: ${userProfile.legTrainingPreference === 'dedicated' ? 'Dedicated leg day' : userProfile.legTrainingPreference === 'spread' ? 'Spread across days' : 'Upper body focus only'}
 ${userProfile.injuries && userProfile.injuries.length > 0 ? `- Injuries/Limitations: ${userProfile.injuries.map((i) => `${i.bodyPart} (${i.type})`).join(', ')}` : ''}
 ${userProfile.mobilityIssues && userProfile.mobilityIssues.length > 0 ? `- Mobility Issues: ${userProfile.mobilityIssues.join(', ')}` : ''}
