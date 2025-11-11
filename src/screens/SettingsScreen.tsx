@@ -239,22 +239,24 @@ export default function SettingsScreen() {
         </Text>
       </View>
 
-      {/* Developer Tools */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>🔧 Developer Tools</Text>
-        <Text style={styles.sectionSubtitle}>
-          Load test scenarios and test AI coach functionality
-        </Text>
-        <TouchableOpacity
-          style={[styles.settingButton, styles.devToolsButton]}
-          onPress={() => navigation.navigate('DeveloperTools')}
-        >
-          <Text style={styles.settingButtonText}>Open Developer Tools</Text>
-          <Text style={styles.settingButtonSubtext}>
-            Load mock data scenarios and test AI analysis
+      {/* Developer Tools - Only in Development */}
+      {__DEV__ && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>🔧 Developer Tools</Text>
+          <Text style={styles.sectionSubtitle}>
+            Load test scenarios and test AI coach functionality
           </Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={[styles.settingButton, styles.devToolsButton]}
+            onPress={() => navigation.navigate('DeveloperTools')}
+          >
+            <Text style={styles.settingButtonText}>Open Developer Tools</Text>
+            <Text style={styles.settingButtonSubtext}>
+              Load mock data scenarios and test AI analysis
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Danger Zone */}
       <View style={styles.section}>

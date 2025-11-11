@@ -39,6 +39,13 @@ import {
 import { initializeExerciseCatalog } from '../services/exerciseDB';
 import { generateDefaultPlan } from '../services/defaultPlan';
 import { checkForExerciseSwap, checkForAutoDeload } from '../services/aiProgression';
+import {
+  addNotificationResponseListener,
+  scheduleRemindLaterNotification,
+  scheduleDailyWorkoutReminder,
+  checkAndScheduleMissedWorkoutNotification,
+  cancelRemindLaterNotification,
+} from '../services/notificationService';
 
 interface DaySchedule {
   date: string; // YYYY-MM-DD
@@ -69,6 +76,22 @@ export default function HomeScreen() {
 
   useEffect(() => {
     initializeApp();
+
+    // Setup notification response listener
+    const subscription = addNotificationResponseListener((response) => {
+      const { actionIdentifier, notification } = response;
+      const { data } = notification.request.content;
+
+      if (actionIdentifier === 'remind-later' || data.type === 'remind-later') {
+        // User tapped "Remind me later"
+        scheduleRemindLaterNotification(data.dayType as DayType);
+      } else if (data.type === 'daily-workout' || data.type === 'stretch-reminder') {
+        // User tapped the notification - app is already open
+        // You could navigate to a specific screen here if needed
+      }
+    });
+
+    return () => subscription.remove();
   }, []);
 
   useEffect(() => {
@@ -268,6 +291,15 @@ export default function HomeScreen() {
         console.error('Error checking for exercise swap:', error);
       }
 
+      // Schedule notifications for today's workout
+      if (todayTraining) {
+        const todayDayType = todayTraining.dayType;
+        // Schedule daily workout reminder
+        await scheduleDailyWorkoutReminder(todayDayType);
+        // Check and schedule missed workout notification
+        await checkAndScheduleMissedWorkoutNotification(todayDayType);
+      }
+
       setLoading(false);
     } catch (error) {
       console.error('Error initializing app:', error);
@@ -290,6 +322,9 @@ export default function HomeScreen() {
 
   const handleStartSession = () => {
     const today = format(new Date(), 'yyyy-MM-dd');
+
+    // Cancel remind later notification since user is starting workout
+    cancelRemindLaterNotification();
 
     if (todayType === 'Outdoor') {
       navigation.navigate('OutdoorTimer', { date: today });

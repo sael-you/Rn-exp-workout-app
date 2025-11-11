@@ -7,6 +7,12 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": false,
+    "notification": {
+      "icon": "./assets/icon.png",
+      "color": "#2563EB",
+      "androidMode": "default",
+      "androidCollapsedTitle": "Athlytic"
+    },
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",

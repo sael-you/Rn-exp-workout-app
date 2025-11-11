@@ -232,14 +232,17 @@ export default function AppNavigator() {
             presentation: 'card',
           }}
         />
-        <Stack.Screen
-          name="DeveloperTools"
-          component={DeveloperToolsScreen}
-          options={{
-            title: 'Developer Tools',
-            presentation: 'card',
-          }}
-        />
+        {/* Developer Tools - Only in Development */}
+        {__DEV__ && (
+          <Stack.Screen
+            name="DeveloperTools"
+            component={DeveloperToolsScreen}
+            options={{
+              title: 'Developer Tools',
+              presentation: 'card',
+            }}
+          />
+        )}
         <Stack.Screen
           name="SessionHistory"
           component={SessionHistoryScreen}

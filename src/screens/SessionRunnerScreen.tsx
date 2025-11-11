@@ -33,6 +33,7 @@ import { analyzeSessionAndUpdateRecommendations } from '../services/aiProgressio
 import { getBestSet } from '../services/progression';
 import { getStretchExercises } from '../services/exerciseDB';
 import StretchRoutineModal from '../components/StretchRoutineModal';
+import { scheduleStretchReminder, cancelStretchReminder } from '../services/notificationService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SessionRunner'>;
 
@@ -115,6 +116,9 @@ export default function SessionRunnerScreen({ route, navigation }: Props) {
 
         await saveGymSession(newSession);
         setSession(newSession);
+
+        // Schedule stretch reminder for 1 hour from now
+        await scheduleStretchReminder();
       }
     } catch (error) {
       console.error('Error initializing session:', error);
@@ -380,6 +384,9 @@ export default function SessionRunnerScreen({ route, navigation }: Props) {
   const handleStretchComplete = () => {
     setShowStretchModal(false);
 
+    // Cancel stretch reminder since user completed stretching
+    cancelStretchReminder();
+
     // Show AI analysis option after stretching
     if (finishedSessionData) {
       // Get auto-adjustments for message (we'll need to recalculate or store them)
@@ -431,6 +438,9 @@ export default function SessionRunnerScreen({ route, navigation }: Props) {
 
   const handleStretchSkip = () => {
     setShowStretchModal(false);
+
+    // Cancel stretch reminder since user skipped stretching
+    cancelStretchReminder();
 
     // Show AI analysis option when user skips stretching from within the modal
     if (finishedSessionData) {

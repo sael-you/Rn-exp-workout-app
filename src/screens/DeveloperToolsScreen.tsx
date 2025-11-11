@@ -47,6 +47,15 @@ import {
   resetProgressionState,
 } from '../services/aiProgression';
 import { useModal } from '../contexts/ModalContext';
+import {
+  scheduleDailyWorkoutReminder,
+  scheduleRemindLaterNotification,
+  scheduleStretchReminder,
+  checkAndScheduleMissedWorkoutNotification,
+  requestNotificationPermissions,
+  cancelAllNotifications,
+} from '../services/notificationService';
+import { DayType } from '../models/types';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -243,6 +252,101 @@ export default function DeveloperToolsScreen() {
     );
   };
 
+  // Notification Test Functions
+  const testRequestPermissions = async () => {
+    try {
+      setLoading(true);
+      const granted = await requestNotificationPermissions();
+      setLoading(false);
+      if (granted) {
+        showSuccess('Permission Granted', 'Notifications are enabled!');
+      } else {
+        showError('Permission Denied', 'Please enable notifications in your device settings.');
+      }
+    } catch (error) {
+      setLoading(false);
+      showError('Error', 'Failed to request notification permissions');
+    }
+  };
+
+  const testDailyReminder = async () => {
+    try {
+      setLoading(true);
+      await scheduleDailyWorkoutReminder('Push' as DayType);
+      setLoading(false);
+      showSuccess(
+        'Daily Reminders Scheduled',
+        'You will receive Push day reminders at 9am, 11am, 1pm, 3pm, 5pm, 7pm, and 9pm daily until you start your workout or 11pm!'
+      );
+    } catch (error) {
+      setLoading(false);
+      showError('Error', 'Failed to schedule daily reminder');
+    }
+  };
+
+  const testRemindLater = async () => {
+    try {
+      setLoading(true);
+      await scheduleRemindLaterNotification('Pull' as DayType);
+      setLoading(false);
+      showSuccess(
+        'Remind Later Scheduled',
+        'You will receive a Pull day reminder in 1 hour!'
+      );
+    } catch (error) {
+      setLoading(false);
+      showError('Error', 'Failed to schedule remind later notification');
+    }
+  };
+
+  const testStretchReminder = async () => {
+    try {
+      setLoading(true);
+      await scheduleStretchReminder();
+      setLoading(false);
+      showSuccess(
+        'Stretch Reminder Scheduled',
+        'You will receive a stretch reminder in 1 hour!'
+      );
+    } catch (error) {
+      setLoading(false);
+      showError('Error', 'Failed to schedule stretch reminder');
+    }
+  };
+
+  const testMissedWorkout = async () => {
+    try {
+      setLoading(true);
+      await checkAndScheduleMissedWorkoutNotification('Legs' as DayType);
+      setLoading(false);
+      showSuccess(
+        'Missed Workout Check',
+        'If today\'s Legs workout hasn\'t been completed, you\'ll receive a motivational notification at 11:00 PM.'
+      );
+    } catch (error) {
+      setLoading(false);
+      showError('Error', 'Failed to schedule missed workout notification');
+    }
+  };
+
+  const testCancelAll = async () => {
+    showConfirm(
+      'Cancel All Notifications?',
+      'This will cancel all scheduled workout reminders, stretch reminders, and other notifications.',
+      async () => {
+        try {
+          setLoading(true);
+          await cancelAllNotifications();
+          setLoading(false);
+          showSuccess('All Notifications Cancelled', 'All scheduled notifications have been removed.');
+        } catch (error) {
+          setLoading(false);
+          showError('Error', 'Failed to cancel notifications');
+        }
+      }
+    );
+  };
+
   return (
     <View style={styles.container}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
@@ -403,6 +507,98 @@ export default function DeveloperToolsScreen() {
               <Text style={styles.toolButtonText}>Clear All Data</Text>
               <Text style={styles.toolButtonSubtext}>
                 Reset app to fresh state
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* Notification Testing */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Notification Tests</Text>
+          <Text style={styles.sectionSubtitle}>
+            Test workout reminders, stretch alerts, and missed workout notifications
+          </Text>
+
+          <TouchableOpacity
+            style={[styles.toolButton, styles.testButton]}
+            onPress={testRequestPermissions}
+            disabled={loading}
+          >
+            <Text style={styles.toolButtonIcon}>🔔</Text>
+            <View style={styles.toolButtonTextContainer}>
+              <Text style={styles.toolButtonText}>Request Permissions</Text>
+              <Text style={styles.toolButtonSubtext}>
+                Test notification permission request
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.toolButton, styles.testButton]}
+            onPress={testDailyReminder}
+            disabled={loading}
+          >
+            <Text style={styles.toolButtonIcon}>⏰</Text>
+            <View style={styles.toolButtonTextContainer}>
+              <Text style={styles.toolButtonText}>Test Daily Reminders</Text>
+              <Text style={styles.toolButtonSubtext}>
+                Schedule 9am + recurring 2-hour reminders for Push day
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.toolButton, styles.testButton]}
+            onPress={testRemindLater}
+            disabled={loading}
+          >
+            <Text style={styles.toolButtonIcon}>⏰</Text>
+            <View style={styles.toolButtonTextContainer}>
+              <Text style={styles.toolButtonText}>Test Remind Later</Text>
+              <Text style={styles.toolButtonSubtext}>
+                Schedule Pull day reminder in 1 hour
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.toolButton, styles.testButton]}
+            onPress={testStretchReminder}
+            disabled={loading}
+          >
+            <Text style={styles.toolButtonIcon}>🧘</Text>
+            <View style={styles.toolButtonTextContainer}>
+              <Text style={styles.toolButtonText}>Test Stretch Reminder</Text>
+              <Text style={styles.toolButtonSubtext}>
+                Schedule stretch reminder in 1 hour
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.toolButton, styles.testButton]}
+            onPress={testMissedWorkout}
+            disabled={loading}
+          >
+            <Text style={styles.toolButtonIcon}>💙</Text>
+            <View style={styles.toolButtonTextContainer}>
+              <Text style={styles.toolButtonText}>Test Missed Workout</Text>
+              <Text style={styles.toolButtonSubtext}>
+                Schedule Legs missed workout notification at 11 PM
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.toolButton, styles.dangerButton]}
+            onPress={testCancelAll}
+            disabled={loading}
+          >
+            <Text style={styles.toolButtonIcon}>🚫</Text>
+            <View style={styles.toolButtonTextContainer}>
+              <Text style={styles.toolButtonText}>Cancel All Notifications</Text>
+              <Text style={styles.toolButtonSubtext}>
+                Remove all scheduled notifications
               </Text>
             </View>
           </TouchableOpacity>
