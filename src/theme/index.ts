@@ -15,10 +15,17 @@ const baseColors = {
   error: '#EF4444', // Red
   info: '#3B82F6', // Blue
 
-  // Day type colors
+  // Day type colors - Muscle Group Split
   dayPush: '#8B5CF6', // Purple
   dayPull: '#06B6D4', // Cyan
   dayUpper: '#EC4899', // Pink
+  dayLegs: '#F59E0B', // Amber/Orange
+  // Day type colors - Body Part Split
+  dayChest: '#A855F7', // Light Purple
+  dayBack: '#14B8A6', // Teal
+  dayShoulders: '#F43F5E', // Rose
+  dayArms: '#3B82F6', // Blue
+  // Special days
   dayOutdoor: '#10B981', // Green
   dayRest: '#6B7280', // Gray
 
@@ -193,18 +200,43 @@ export const hitSlop = {
 // Helper to get day type color
 export const getDayTypeColor = (dayType: string): string => {
   switch (dayType) {
+    // Muscle group split
     case 'Push':
       return colors.dayPush;
     case 'Pull':
       return colors.dayPull;
     case 'Upper2':
       return colors.dayUpper;
+    case 'Legs':
+      return colors.dayLegs;
+    // Body part split
+    case 'Chest':
+      return colors.dayChest;
+    case 'Back':
+      return colors.dayBack;
+    case 'Shoulders':
+      return colors.dayShoulders;
+    case 'Arms':
+      return colors.dayArms;
+    // Special
     case 'Outdoor':
       return colors.dayOutdoor;
     case 'Rest':
       return colors.dayRest;
     default:
       return colors.gray500;
+  }
+};
+
+// Helper to get day type display name
+export const getDayTypeDisplayName = (dayType: string): string => {
+  switch (dayType) {
+    case 'Upper2':
+      return 'Upper Body';
+    case 'Outdoor':
+      return 'Outdoor';
+    default:
+      return dayType; // Push, Pull, Legs, Chest, Back, Shoulders, Arms, Rest
   }
 };
 
@@ -219,4 +251,5 @@ export default {
   animations,
   hitSlop,
   getDayTypeColor,
+  getDayTypeDisplayName,
 };

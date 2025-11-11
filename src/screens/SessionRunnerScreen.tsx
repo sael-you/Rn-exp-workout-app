@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { colors, spacing, typography } from '../theme';
+import { colors, spacing, typography, getDayTypeDisplayName } from '../theme';
 import { useModal } from '../contexts/ModalContext';
 import {
   GymSession,
@@ -335,7 +335,7 @@ export default function SessionRunnerScreen({ route, navigation }: Props) {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>{dayType} Day</Text>
+        <Text style={styles.headerTitle}>{getDayTypeDisplayName(dayType)} Day</Text>
         <TouchableOpacity
           style={styles.finishButton}
           onPress={handleFinishSession}

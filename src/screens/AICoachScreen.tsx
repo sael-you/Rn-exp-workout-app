@@ -399,12 +399,10 @@ export default function AICoachScreen() {
         return;
       }
 
-      // Get all exercises from the plan
-      const allPlannedExercises = [
-        ...workoutPlan.plans.Push.exercises,
-        ...workoutPlan.plans.Pull.exercises,
-        ...workoutPlan.plans.Upper2.exercises,
-      ];
+      // Get all exercises from the plan (works for both muscle group and body part splits)
+      const allPlannedExercises = Object.values(workoutPlan.plans)
+        .filter(dayPlan => dayPlan && dayPlan.exercises)
+        .flatMap(dayPlan => dayPlan!.exercises);
 
       if (allPlannedExercises.length === 0) {
         showWarning('No Exercises', 'Your workout plan has no exercises to substitute.');

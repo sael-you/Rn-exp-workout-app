@@ -6,7 +6,10 @@
 // Day Types & Weekly Program
 // ============================================================================
 
-export type DayType = 'Push' | 'Pull' | 'Upper2' | 'Outdoor' | 'Rest';
+export type DayType = 'Push' | 'Pull' | 'Upper2' | 'Legs' | 'Chest' | 'Back' | 'Shoulders' | 'Arms' | 'Outdoor' | 'Rest';
+
+// Training split philosophy
+export type TrainingSplit = 'muscle_group' | 'body_part';
 
 export interface TrainingDay {
   id: string;
@@ -64,10 +67,18 @@ export interface DayPlan {
 export interface WorkoutPlan {
   id: string;
   name: string;
+  trainingSplit: TrainingSplit; // Indicates which type of split this plan uses
   plans: {
-    Push: DayPlan;
-    Pull: DayPlan;
-    Upper2: DayPlan;
+    // Muscle group split days (PPL style)
+    Push?: DayPlan;
+    Pull?: DayPlan;
+    Upper2?: DayPlan;
+    Legs?: DayPlan;
+    // Body part split days
+    Chest?: DayPlan;
+    Back?: DayPlan;
+    Shoulders?: DayPlan;
+    Arms?: DayPlan;
   };
   createdAt: string;
   updatedAt: string;
@@ -104,7 +115,7 @@ export interface ExerciseLog {
 
 export interface GymSession {
   id: string;
-  dayType: 'Push' | 'Pull' | 'Upper2';
+  dayType: 'Push' | 'Pull' | 'Upper2' | 'Legs' | 'Chest' | 'Back' | 'Shoulders' | 'Arms';
   date: string;
   startTime: string;
   endTime?: string;
@@ -267,6 +278,13 @@ export interface UserProfile {
   primaryGoal?: TrainingGoal;
   experienceLevel?: ExperienceLevel;
 
+  // Program preferences
+  trainingSplit?: TrainingSplit; // Muscle group (PPL) vs Body part split (Chest/Back/etc)
+  workoutLocation?: 'gym' | 'home'; // Where user trains
+  weeklyFrequency?: number; // How many times per week (2-6)
+  legTrainingPreference?: 'none' | 'spread' | 'dedicated'; // How to include leg training
+  outdoorDayPreference?: number; // Day of week (0-6) for outdoor training, undefined = no preference
+
   // AI-generated flag
   aiGeneratedProgramDate?: string; // When AI last generated a program
 }
@@ -292,7 +310,7 @@ export interface AICoachData {
 
 export interface ExerciseRecommendation {
   exerciseId: string;
-  dayType: 'Push' | 'Pull' | 'Upper2';
+  dayType: 'Push' | 'Pull' | 'Upper2' | 'Legs' | 'Chest' | 'Back' | 'Shoulders' | 'Arms';
   weight: number;
   reps: number;
   lastUpdated: string;

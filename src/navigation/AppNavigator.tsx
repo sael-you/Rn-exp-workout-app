@@ -29,7 +29,7 @@ import { Exercise, GymSession, PlannedExercise } from '../models/types';
 export type RootStackParamList = {
   MainTabs: undefined;
   SessionRunner: {
-    dayType: 'Push' | 'Pull' | 'Upper2';
+    dayType: GymSession['dayType'];
     date: string;
   };
   OutdoorTimer: {
@@ -42,10 +42,10 @@ export type RootStackParamList = {
   };
   ProgressionHistory: {
     exercise: Exercise;
-    dayType: 'Push' | 'Pull' | 'Upper2';
+    dayType: GymSession['dayType'];
   };
   EditPlan: {
-    dayType: 'Push' | 'Pull' | 'Upper2';
+    dayType: GymSession['dayType'];
   };
   ProfileSetup: undefined;
   AICoach: undefined;

@@ -3,7 +3,7 @@
  * Analyzes workout sessions and provides insights using Google Gemini AI
  */
 
-import { GymSession, OutdoorSession, UserProfile, Exercise, WorkoutPlan, DayPlan, PlannedExercise } from '../models/types';
+import { GymSession, OutdoorSession, UserProfile, Exercise, WorkoutPlan, DayPlan, PlannedExercise, TrainingSplit, DayType } from '../models/types';
 
 // Load API key from environment variables
 const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
@@ -201,7 +201,7 @@ Keep your response concise and encouraging (max 250 words).`;
  */
 export async function getWorkoutSuggestions(
   recentSessions: (GymSession | OutdoorSession)[],
-  dayType: 'Push' | 'Pull' | 'Upper2' | 'Outdoor'
+  dayType: DayType
 ): Promise<string> {
   let prompt = `You are a fitness coach planning the next workout. Based on recent training history, provide specific recommendations for the upcoming ${dayType} day.
 
@@ -465,12 +465,16 @@ export async function adaptProgramForConstraints(
   exercises: Exercise[],
   userProfile: UserProfile
 ): Promise<WorkoutPlan> {
+  // Build current program summary dynamically
+  const programSummary = Object.entries(currentPlan.plans)
+    .filter(([_, dayPlan]) => dayPlan && dayPlan.exercises)
+    .map(([dayType, dayPlan]) => `${dayType} Day: ${dayPlan!.exercises.length} exercises`)
+    .join('\n');
+
   const prompt = `You are a strength & conditioning coach. Adapt the current workout program based on a constraint.
 
 CURRENT PROGRAM:
-Push Day: ${currentPlan.plans.Push.exercises.length} exercises
-Pull Day: ${currentPlan.plans.Pull.exercises.length} exercises
-Upper2 Day: ${currentPlan.plans.Upper2.exercises.length} exercises
+${programSummary}
 
 CONSTRAINT:
 Type: ${constraint.type}
@@ -506,24 +510,69 @@ export async function generateWorkoutProgram(
   userProfile: UserProfile,
   exercises: Exercise[]
 ): Promise<WorkoutPlan> {
-  // Prepare exercise data for AI
-  const exercisesByMuscle: Record<string, Exercise[]> = {};
-  exercises.forEach((ex) => {
-    if (!exercisesByMuscle[ex.bodyPart]) {
-      exercisesByMuscle[ex.bodyPart] = [];
-    }
-    exercisesByMuscle[ex.bodyPart].push(ex);
-  });
+  // ========================================
+  // 1. EXPERIENCE-BASED VOLUME SCALING
+  // ========================================
+  const experienceLevel = userProfile.experienceLevel || 'intermediate';
+  const isBodyPartSplit = userProfile.trainingSplit === 'body_part';
 
+  let exerciseCount: number;
+  let totalSets: number;
+
+  if (isBodyPartSplit) {
+    // Body part split: Higher volume per session
+    if (experienceLevel === 'beginner') {
+      exerciseCount = 6;
+      totalSets = 14;
+    } else {
+      exerciseCount = 8;
+      totalSets = 18;
+    }
+  } else {
+    // Muscle group split: Moderate volume
+    if (experienceLevel === 'beginner') {
+      exerciseCount = 6;
+      totalSets = 14;
+    } else {
+      exerciseCount = 8;
+      totalSets = 18;
+    }
+  }
+
+  // ========================================
+  // 2. OUTDOOR LEG EXCLUSION RULE
+  // ========================================
+  const hasOutdoorDay = userProfile.outdoorDayPreference !== undefined;
+  const excludeLegsFromGym = hasOutdoorDay && (userProfile.legTrainingPreference === 'spread' || userProfile.legTrainingPreference === 'dedicated');
+
+  // ========================================
+  // 3. FILTER & ORGANIZE EXERCISES
+  // ========================================
   // Filter out excluded exercises
-  const availableExercises = exercises.filter(
+  let availableExercises = exercises.filter(
     (ex) => !userProfile.excludedExercises?.includes(ex.id)
   );
 
-  // Group exercises by category for the AI
+  // Filter by equipment based on workout location
+  if (userProfile.workoutLocation === 'home') {
+    const homeEquipment = ['body weight', 'dumbbell', 'resistance band', 'kettlebell', 'ez barbell'];
+    availableExercises = availableExercises.filter((ex) =>
+      homeEquipment.some((equip) => ex.equipment.toLowerCase().includes(equip))
+    );
+  }
+
+  // Filter leg exercises based on user preference
+  if (userProfile.legTrainingPreference === 'none') {
+    const legBodyParts = ['upper legs', 'lower legs', 'cardio'];
+    availableExercises = availableExercises.filter((ex) =>
+      !legBodyParts.includes(ex.bodyPart.toLowerCase())
+    );
+  }
+
+  // Group exercises by category
   const chestExercises = availableExercises.filter((ex) =>
     ex.bodyPart === 'chest' || ex.target.includes('pectoral')
-  ).slice(0, 20); // Limit to top 20 per category
+  ).slice(0, 20);
 
   const shoulderExercises = availableExercises.filter((ex) =>
     ex.bodyPart === 'shoulders' || ex.target.includes('delt')
@@ -541,19 +590,116 @@ export async function generateWorkoutProgram(
     ex.target.includes('biceps')
   ).slice(0, 10);
 
-  // Build prompt for AI with actual exercise options
-  let prompt = `You are an expert strength & conditioning coach with 20 years of experience. Design a personalized 3-day upper body training program.
+  const legExercises = (userProfile.legTrainingPreference === 'spread' || userProfile.legTrainingPreference === 'dedicated')
+    ? availableExercises.filter((ex) =>
+        ex.bodyPart === 'upper legs' || ex.bodyPart === 'lower legs' ||
+        ex.target.includes('quads') || ex.target.includes('hamstrings') ||
+        ex.target.includes('glutes') || ex.target.includes('calves')
+      ).slice(0, 20)
+    : [];
+
+  // ========================================
+  // 4. GOAL-SPECIFIC PARAMETERS
+  // ========================================
+  const goal = userProfile.primaryGoal || 'hypertrophy';
+  let repRanges: { compound: string; accessory: string; isolation: string };
+
+  if (goal === 'strength') {
+    repRanges = {
+      compound: '4-6 reps',
+      accessory: '6-10 reps',
+      isolation: '8-12 reps'
+    };
+  } else if (goal === 'endurance') {
+    repRanges = {
+      compound: '12-15 reps',
+      accessory: '15-20 reps',
+      isolation: '20-25 reps'
+    };
+  } else {
+    // Hypertrophy (default)
+    repRanges = {
+      compound: '6-8 reps',
+      accessory: '8-12 reps',
+      isolation: '10-15 reps'
+    };
+  }
+
+  // ========================================
+  // 5. BRANCH: MUSCLE GROUP vs BODY PART
+  // ========================================
+  const trainingSplit = userProfile.trainingSplit || 'muscle_group';
+
+  if (trainingSplit === 'muscle_group') {
+    return generateMuscleGroupProgram(
+      userProfile,
+      exerciseCount,
+      totalSets,
+      repRanges,
+      excludeLegsFromGym,
+      chestExercises,
+      shoulderExercises,
+      tricepsExercises,
+      backExercises,
+      bicepsExercises,
+      legExercises,
+      experienceLevel
+    );
+  } else {
+    return generateBodyPartProgram(
+      userProfile,
+      exerciseCount,
+      totalSets,
+      repRanges,
+      chestExercises,
+      shoulderExercises,
+      tricepsExercises,
+      backExercises,
+      bicepsExercises,
+      legExercises,
+      experienceLevel
+    );
+  }
+}
+
+/**
+ * Generate Muscle Group (Push/Pull/Legs) Training Program
+ */
+async function generateMuscleGroupProgram(
+  userProfile: UserProfile,
+  exerciseCount: number,
+  totalSets: number,
+  repRanges: { compound: string; accessory: string; isolation: string },
+  excludeLegsFromGym: boolean,
+  chestExercises: Exercise[],
+  shoulderExercises: Exercise[],
+  tricepsExercises: Exercise[],
+  backExercises: Exercise[],
+  bicepsExercises: Exercise[],
+  legExercises: Exercise[],
+  experienceLevel: string
+): Promise<WorkoutPlan> {
+  const goal = userProfile.primaryGoal || 'hypertrophy';
+
+  // Adjust exercise count based on leg preferences
+  const pushExerciseCount = excludeLegsFromGym ? exerciseCount : (userProfile.legTrainingPreference === 'spread' ? exerciseCount + 1 : exerciseCount);
+  const pullExerciseCount = excludeLegsFromGym ? exerciseCount : (userProfile.legTrainingPreference === 'spread' ? exerciseCount + 1 : exerciseCount);
+  const upper2ExerciseCount = excludeLegsFromGym ? exerciseCount : (userProfile.legTrainingPreference === 'spread' ? exerciseCount + 1 : exerciseCount);
+
+  const prompt = `You are an expert strength & conditioning coach with 20 years of experience. Design a personalized MUSCLE GROUP SPLIT (Push/Pull/Legs) training program.
 
 USER PROFILE:
-- Primary Goal: ${userProfile.primaryGoal || 'hypertrophy (muscle building)'}
-- Experience Level: ${userProfile.experienceLevel || 'intermediate'}
+- Primary Goal: ${goal.toUpperCase()} (${goal === 'strength' ? 'maximize 1RM strength' : goal === 'endurance' ? 'muscular endurance & conditioning' : 'muscle hypertrophy & size'})
+- Experience Level: ${experienceLevel}
+- Training Location: ${userProfile.workoutLocation === 'home' ? 'Home (limited equipment)' : 'Gym (full equipment access)'}
+- Leg Training: ${excludeLegsFromGym ? 'EXCLUDED from gym days (user has outdoor leg training)' : userProfile.legTrainingPreference === 'spread' ? 'Spread across all days (1 exercise per day)' : userProfile.legTrainingPreference === 'dedicated' ? 'Dedicated leg day' : 'Upper body focus only'}
 ${userProfile.injuries && userProfile.injuries.length > 0 ? `- Injuries/Limitations: ${userProfile.injuries.map((i) => `${i.bodyPart} (${i.type})`).join(', ')}` : ''}
 ${userProfile.mobilityIssues && userProfile.mobilityIssues.length > 0 ? `- Mobility Issues: ${userProfile.mobilityIssues.join(', ')}` : ''}
 
 TRAINING SPLIT:
-- Push Day: Chest, shoulders, triceps
-- Pull Day: Back, biceps, rear delts
-- Upper2 Day: Full upper body (balanced, hitting weak points)
+- Push Day: Chest, shoulders, triceps${!excludeLegsFromGym && userProfile.legTrainingPreference === 'spread' ? ' + 1 leg exercise' : ''}
+- Pull Day: Back, biceps, rear delts${!excludeLegsFromGym && userProfile.legTrainingPreference === 'spread' ? ' + 1 leg exercise' : ''}
+- Upper2 Day: Full upper body (balanced, hitting weak points)${!excludeLegsFromGym && userProfile.legTrainingPreference === 'spread' ? ' + 1 leg exercise' : ''}${userProfile.legTrainingPreference === 'dedicated' ? '\n- Legs Day: Dedicated leg training (quads, hamstrings, glutes, calves)' : ''}
 
 AVAILABLE EXERCISES - Select from these IDs:
 
@@ -571,47 +717,61 @@ ${backExercises.map((ex) => `- ${ex.id}: ${ex.name} (${ex.equipment})`).join('\n
 
 BICEPS (${bicepsExercises.length} options):
 ${bicepsExercises.map((ex) => `- ${ex.id}: ${ex.name} (${ex.equipment})`).join('\n')}
+${(!excludeLegsFromGym && legExercises.length > 0) ? `
+LEGS (${legExercises.length} options):
+${legExercises.map((ex) => `- ${ex.id}: ${ex.name} (${ex.equipment})`).join('\n')}
+` : ''}
 
 PROGRAMMING PRINCIPLES:
-1. Volume targets per muscle per week (across all 3 days):
-   - Chest: 14-18 sets
-   - Back: 12-16 sets
-   - Shoulders (total): 12-15 sets
-     * Front delts: covered by pressing (4-6 sets)
-     * Side delts (LATERAL): 6-9 sets (REQUIRED - must include lateral raises!)
-     * Rear delts: 4-6 sets (REQUIRED)
-   - Triceps: 9-12 sets
-   - Biceps: 8-10 sets
+1. Experience-Based Volume:
+   - ${experienceLevel === 'beginner' ? 'Beginner: Lower volume, focus on form mastery, favor machines/cables for safety' : 'Intermediate/Advanced: Higher volume, include free weights and compound lifts'}
+   - Target: ${totalSets} total sets per session, ${exerciseCount} exercises per day
 
-2. Rep Ranges: ${userProfile.primaryGoal === 'strength' ? 'Compounds: 4-6 reps, Accessories: 6-10 reps' : 'Compounds: 6-8 reps, Accessories: 8-12 reps, Lateral raises: 10-15 reps'}
+2. Volume Targets per Muscle per Week (adjust for ${goal}):
+   - Chest: ${goal === 'strength' ? '10-14 sets' : '14-18 sets'}
+   - Back: ${goal === 'strength' ? '10-14 sets' : '12-16 sets'}
+   - Shoulders: ${goal === 'strength' ? '8-12 sets' : '12-15 sets'}
+   - Triceps: ${goal === 'strength' ? '6-9 sets' : '9-12 sets'}
+   - Biceps: ${goal === 'strength' ? '6-8 sets' : '8-10 sets'}${!excludeLegsFromGym && userProfile.legTrainingPreference === 'spread' ? `\n   - Legs: 9-12 sets (spread across 3 days)` : userProfile.legTrainingPreference === 'dedicated' ? `\n   - Legs: 12-16 sets (dedicated day)` : ''}
 
-3. Exercise Selection (STRICT REQUIREMENTS):
+3. Rep Ranges (${goal.toUpperCase()}):
+   - Compound exercises: ${repRanges.compound}
+   - Accessory exercises: ${repRanges.accessory}
+   - Isolation exercises: ${repRanges.isolation}
 
-   PUSH DAY (6 exercises):
-   a) Chest compound press (barbell or dumbbell) - 4 sets × 6-8 reps
-   b) Chest incline or upper chest variation - 3 sets × 8-10 reps
-   c) Chest isolation (fly, cable, etc.) - 3 sets × 10-12 reps
-   d) Shoulder overhead press (barbell or dumbbell) - 3-4 sets × 6-8 reps
-   e) LATERAL RAISE (cable, dumbbell, or machine) - 3 sets × 10-15 reps ⚠️ MANDATORY
-   f) Triceps exercise - 3 sets × 8-12 reps
+4. Exercise Selection:
+   ${experienceLevel === 'beginner' ? '- Favor machines, cables, and dumbbells for safety and form learning\n   - Include 1-2 barbell compounds maximum\n   - Prioritize controlled, safe movements' : '- Balance free weights and machines\n   - Include barbell compounds for strength foundation\n   - Mix equipment for variety'}
 
-   PULL DAY (6 exercises):
-   a) Horizontal pull (barbell row, dumbbell row, etc.) - 4 sets × 6-8 reps
-   b) Vertical pull (pull-up, lat pulldown, etc.) - 3-4 sets × 6-10 reps
-   c) Back accessory (row variation, pullover, etc.) - 3 sets × 8-12 reps
-   d) Traps/upper back (shrug, face pull, etc.) - 3 sets × 8-12 reps
-   e) Biceps compound (barbell curl, etc.) - 3 sets × 8-10 reps
-   f) REAR DELT (rear delt fly, face pull, etc.) - 3 sets × 10-15 reps ⚠️ MANDATORY
+   PUSH DAY (${pushExerciseCount} exercises):
+   a) Chest compound press (barbell or dumbbell) - ${goal === 'strength' ? '5 sets × 4-6 reps' : '4 sets × 6-8 reps'}
+   b) Chest incline variation - ${goal === 'strength' ? '4 sets × 6-8 reps' : '3 sets × 8-10 reps'}
+   c) Chest isolation (fly, cable, etc.) - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '10-12 reps'}
+   d) Shoulder overhead press - ${goal === 'strength' ? '4 sets × 4-6 reps' : '3-4 sets × 6-8 reps'}
+   e) LATERAL RAISE (MANDATORY) - 3 sets × ${goal === 'strength' ? '8-12 reps' : '10-15 reps'}
+   f) Triceps exercise - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '8-12 reps'}${!excludeLegsFromGym && userProfile.legTrainingPreference === 'spread' ? `\n   g) Leg exercise (squat, leg press, or lunge) - 3 sets × 8-12 reps` : ''}
 
-   UPPER2 DAY (6 exercises - balanced mix):
-   a) Shoulder press variation (different from Push day) - 3 sets × 8-12 reps
-   b) Chest compound (dumbbell, machine, or bodyweight) - 3 sets × 8-12 reps
-   c) Back compound (row or pull variation) - 3 sets × 8-12 reps
-   d) LATERAL RAISE variation (different from Push) - 3 sets × 12-15 reps ⚠️ MANDATORY
-   e) Biceps exercise - 3 sets × 10-12 reps
-   f) Triceps exercise - 3 sets × 10-12 reps
+   PULL DAY (${pullExerciseCount} exercises):
+   a) Horizontal pull (row variation) - ${goal === 'strength' ? '5 sets × 4-6 reps' : '4 sets × 6-8 reps'}
+   b) Vertical pull (pull-up or pulldown) - ${goal === 'strength' ? '4 sets × 4-6 reps' : '3-4 sets × 6-10 reps'}
+   c) Back accessory (row, pullover, etc.) - 3 sets × ${goal === 'endurance' ? '12-15 reps' : '8-12 reps'}
+   d) Traps/upper back (shrug, face pull, etc.) - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '8-12 reps'}
+   e) Biceps compound (barbell curl, etc.) - 3 sets × ${goal === 'endurance' ? '12-15 reps' : '8-10 reps'}
+   f) REAR DELT (MANDATORY) - 3 sets × ${goal === 'strength' ? '8-12 reps' : '10-15 reps'}${!excludeLegsFromGym && userProfile.legTrainingPreference === 'spread' ? `\n   g) Leg exercise (deadlift variation, hamstring curl, hip thrust) - 3 sets × 8-12 reps` : ''}
 
-4. Progression: Double progression (increase reps within range first, then add weight)
+   UPPER2 DAY (${upper2ExerciseCount} exercises - balanced mix):
+   a) Shoulder press variation - 3 sets × ${goal === 'endurance' ? '12-15 reps' : '8-12 reps'}
+   b) Chest compound - 3 sets × ${goal === 'endurance' ? '12-15 reps' : '8-12 reps'}
+   c) Back compound - 3 sets × ${goal === 'endurance' ? '12-15 reps' : '8-12 reps'}
+   d) LATERAL RAISE variation (MANDATORY) - 3 sets × ${goal === 'strength' ? '10-12 reps' : '12-15 reps'}
+   e) Biceps exercise - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '10-12 reps'}
+   f) Triceps exercise - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '10-12 reps'}${!excludeLegsFromGym && userProfile.legTrainingPreference === 'spread' ? `\n   g) Leg accessory (calf, leg extension, etc.) - 3 sets × 10-15 reps` : ''}${userProfile.legTrainingPreference === 'dedicated' ? `\n\n   LEGS DAY (4-5 exercises):\n   a) Quad compound (squat, leg press) - ${goal === 'strength' ? '5 sets × 4-6 reps' : '4 sets × 6-10 reps'}\n   b) Hamstring compound (RDL, leg curl) - ${goal === 'strength' ? '4 sets × 6-8 reps' : '3-4 sets × 8-12 reps'}\n   c) Glute exercise (hip thrust, Bulgarian split squat) - 3 sets × 8-12 reps\n   d) Quad isolation (leg extension, lunge) - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '10-15 reps'}\n   e) Calf exercise - 3 sets × ${goal === 'endurance' ? '20-25 reps' : '12-20 reps'}` : ''}
+
+5. PROGRESSIVE OVERLOAD:
+   - Week 1-2: Establish baseline (learn movements, perfect form)
+   - Week 3-4: Add 5-10% load or 1-2 reps
+   - Week 5-6: Add 5-10% load or 1-2 reps
+   - Week 7: Deload (reduce volume by 40%)
+   - Repeat cycle with higher baseline
 
 ${userProfile.injuries && userProfile.injuries.length > 0 ? `
 SAFETY CONSIDERATIONS:
@@ -619,7 +779,7 @@ ${userProfile.injuries.map((i) => `- ${i.bodyPart}: ${i.restrictions?.join(', ')
 ` : ''}
 
 TASK:
-Design the complete 3-day program by selecting exercises from the available database. For each exercise, return ONLY the exercise ID (not the full name).
+Design the complete program by selecting exercises from the available database. Return ONLY the exercise ID (not the full name).
 
 Return your response in this EXACT JSON format (no markdown, no explanation, pure JSON):
 {
@@ -632,7 +792,7 @@ Return your response in this EXACT JSON format (no markdown, no explanation, pur
   ],
   "Upper2": [
     ...
-  ],
+  ],${userProfile.legTrainingPreference === 'dedicated' ? '\n  "Legs": [\n    ...\n  ],' : ''}
   "overallRationale": "Brief explanation of program design philosophy",
   "progressionScheme": "How to progress week to week"
 }
@@ -640,96 +800,323 @@ Return your response in this EXACT JSON format (no markdown, no explanation, pur
 IMPORTANT:
 - Return ONLY valid JSON, no markdown formatting
 - Use actual exercise IDs from the database
-- Each day MUST have exactly 6 exercises (following the structure above)
-- Order exercises from most taxing to least (compounds first)
-- Balance push/pull volume across the week
-- MANDATORY: Include lateral raises on Push (exercise e) and Upper2 (exercise d) days
-- MANDATORY: Include rear delt work on Pull day (exercise f)`;
+- Push/Pull/Upper2 days MUST have exactly ${pushExerciseCount}/${pullExerciseCount}/${upper2ExerciseCount} exercises respectively
+- Order exercises from most taxing to least (compounds first, accessories last)
+- MANDATORY: Include lateral raises on Push and Upper2 days
+- MANDATORY: Include rear delt work on Pull day${!excludeLegsFromGym && userProfile.legTrainingPreference === 'spread' ? '\n- MANDATORY: Include ONE leg exercise on each day' : ''}${userProfile.legTrainingPreference === 'dedicated' ? '\n- MANDATORY: Include 4-5 leg exercises on dedicated Legs day' : ''}`;
 
   try {
-    console.log('[AI] Sending request to Gemini API...');
+    console.log('[AI] Generating Muscle Group Split program...');
     const aiResponse = await callGeminiAPI(prompt);
-    console.log('[AI] Received response from Gemini API');
-    console.log('[AI] Raw AI response (first 500 chars):', aiResponse.substring(0, 500));
 
     // Parse JSON response
-    // Remove markdown code blocks if present
     let jsonString = aiResponse.trim();
     if (jsonString.startsWith('```')) {
       jsonString = jsonString.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     }
 
-    console.log('[AI] Parsing JSON response...');
     const programData = JSON.parse(jsonString);
-    console.log('[AI] Parsed program data:', {
-      hasPush: !!programData.Push,
-      hasPull: !!programData.Pull,
-      hasUpper2: !!programData.Upper2,
-      pushCount: programData.Push?.length,
-      pullCount: programData.Pull?.length,
-      upper2Count: programData.Upper2?.length,
-    });
 
     // Build WorkoutPlan object
-    const pushDayPlan: DayPlan = {
-      dayType: 'Push',
-      exercises: programData.Push.map((ex: any, index: number) => ({
-        exerciseId: ex.exerciseId,
-        order: index,
-        targetSets: ex.targetSets,
-        repRangeMin: ex.repRangeMin,
-        repRangeMax: ex.repRangeMax,
-        notes: ex.rationale,
-      })),
-    };
-
-    const pullDayPlan: DayPlan = {
-      dayType: 'Pull',
-      exercises: programData.Pull.map((ex: any, index: number) => ({
-        exerciseId: ex.exerciseId,
-        order: index,
-        targetSets: ex.targetSets,
-        repRangeMin: ex.repRangeMin,
-        repRangeMax: ex.repRangeMax,
-        notes: ex.rationale,
-      })),
-    };
-
-    const upper2DayPlan: DayPlan = {
-      dayType: 'Upper2',
-      exercises: programData.Upper2.map((ex: any, index: number) => ({
-        exerciseId: ex.exerciseId,
-        order: index,
-        targetSets: ex.targetSets,
-        repRangeMin: ex.repRangeMin,
-        repRangeMax: ex.repRangeMax,
-        notes: ex.rationale,
-      })),
-    };
-
     const workoutPlan: WorkoutPlan = {
       id: `ai-generated-${Date.now()}`,
-      name: `AI Generated Program - ${userProfile.primaryGoal || 'Hypertrophy'}`,
+      name: `${goal.charAt(0).toUpperCase() + goal.slice(1)} Program - Muscle Group Split`,
+      trainingSplit: 'muscle_group',
       plans: {
-        Push: pushDayPlan,
-        Pull: pullDayPlan,
-        Upper2: upper2DayPlan,
+        Push: {
+          dayType: 'Push',
+          exercises: programData.Push.map((ex: any, index: number) => ({
+            exerciseId: ex.exerciseId,
+            order: index,
+            targetSets: ex.targetSets,
+            repRangeMin: ex.repRangeMin,
+            repRangeMax: ex.repRangeMax,
+            notes: ex.rationale,
+          })),
+        },
+        Pull: {
+          dayType: 'Pull',
+          exercises: programData.Pull.map((ex: any, index: number) => ({
+            exerciseId: ex.exerciseId,
+            order: index,
+            targetSets: ex.targetSets,
+            repRangeMin: ex.repRangeMin,
+            repRangeMax: ex.repRangeMax,
+            notes: ex.rationale,
+          })),
+        },
+        Upper2: {
+          dayType: 'Upper2',
+          exercises: programData.Upper2.map((ex: any, index: number) => ({
+            exerciseId: ex.exerciseId,
+            order: index,
+            targetSets: ex.targetSets,
+            repRangeMin: ex.repRangeMin,
+            repRangeMax: ex.repRangeMax,
+            notes: ex.rationale,
+          })),
+        },
+        ...(programData.Legs && {
+          Legs: {
+            dayType: 'Legs',
+            exercises: programData.Legs.map((ex: any, index: number) => ({
+              exerciseId: ex.exerciseId,
+              order: index,
+              targetSets: ex.targetSets,
+              repRangeMin: ex.repRangeMin,
+              repRangeMax: ex.repRangeMax,
+              notes: ex.rationale,
+            })),
+          },
+        }),
       },
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
-    console.log('[AI] Built final WorkoutPlan object:', {
-      id: workoutPlan.id,
-      name: workoutPlan.name,
-      pushExercises: workoutPlan.plans.Push.exercises.length,
-      pullExercises: workoutPlan.plans.Pull.exercises.length,
-      upper2Exercises: workoutPlan.plans.Upper2.exercises.length,
-    });
-
+    console.log('[AI] Muscle Group Split program generated successfully');
     return workoutPlan;
   } catch (error) {
-    console.error('Error generating workout program:', error);
+    console.error('Error generating muscle group program:', error);
+    throw new Error('Failed to generate workout program. Please try again.');
+  }
+}
+
+/**
+ * Generate Body Part (Chest/Back/Shoulders/Arms) Training Program
+ */
+async function generateBodyPartProgram(
+  userProfile: UserProfile,
+  exerciseCount: number,
+  totalSets: number,
+  repRanges: { compound: string; accessory: string; isolation: string },
+  chestExercises: Exercise[],
+  shoulderExercises: Exercise[],
+  tricepsExercises: Exercise[],
+  backExercises: Exercise[],
+  bicepsExercises: Exercise[],
+  legExercises: Exercise[],
+  experienceLevel: string
+): Promise<WorkoutPlan> {
+  const goal = userProfile.primaryGoal || 'hypertrophy';
+  const hasLegs = userProfile.legTrainingPreference === 'dedicated' || userProfile.legTrainingPreference === 'spread';
+
+  const prompt = `You are an expert strength & conditioning coach with 20 years of experience. Design a personalized BODY PART SPLIT training program.
+
+USER PROFILE:
+- Primary Goal: ${goal.toUpperCase()} (${goal === 'strength' ? 'maximize 1RM strength' : goal === 'endurance' ? 'muscular endurance & conditioning' : 'muscle hypertrophy & size'})
+- Experience Level: ${experienceLevel}
+- Training Location: ${userProfile.workoutLocation === 'home' ? 'Home (limited equipment)' : 'Gym (full equipment access)'}
+- Leg Training: ${userProfile.legTrainingPreference === 'dedicated' ? 'Dedicated leg day' : userProfile.legTrainingPreference === 'spread' ? 'Spread across days' : 'Upper body focus only'}
+${userProfile.injuries && userProfile.injuries.length > 0 ? `- Injuries/Limitations: ${userProfile.injuries.map((i) => `${i.bodyPart} (${i.type})`).join(', ')}` : ''}
+${userProfile.mobilityIssues && userProfile.mobilityIssues.length > 0 ? `- Mobility Issues: ${userProfile.mobilityIssues.join(', ')}` : ''}
+
+TRAINING SPLIT (Body Part Isolation):
+- Chest Day: Complete chest focus
+- Back Day: Complete back & lat focus
+- Shoulders Day: All three deltoid heads (front, side, rear)
+- Arms Day: Biceps & triceps${hasLegs ? '\n- Legs Day: Quads, hamstrings, glutes, calves' : ''}
+
+AVAILABLE EXERCISES - Select from these IDs:
+
+CHEST (${chestExercises.length} options):
+${chestExercises.map((ex) => `- ${ex.id}: ${ex.name} (${ex.equipment})`).join('\n')}
+
+SHOULDERS (${shoulderExercises.length} options):
+${shoulderExercises.map((ex) => `- ${ex.id}: ${ex.name} (${ex.equipment})`).join('\n')}
+
+TRICEPS (${tricepsExercises.length} options):
+${tricepsExercises.map((ex) => `- ${ex.id}: ${ex.name} (${ex.equipment})`).join('\n')}
+
+BACK (${backExercises.length} options):
+${backExercises.map((ex) => `- ${ex.id}: ${ex.name} (${ex.equipment})`).join('\n')}
+
+BICEPS (${bicepsExercises.length} options):
+${bicepsExercises.map((ex) => `- ${ex.id}: ${ex.name} (${ex.equipment})`).join('\n')}
+${hasLegs ? `
+LEGS (${legExercises.length} options):
+${legExercises.map((ex) => `- ${ex.id}: ${ex.name} (${ex.equipment})`).join('\n')}
+` : ''}
+
+PROGRAMMING PRINCIPLES:
+1. Experience-Based Volume:
+   - ${experienceLevel === 'beginner' ? 'Beginner: 6-8 exercises, 14-16 total sets, favor machines/cables' : 'Intermediate/Advanced: 8-10 exercises, 18-22 total sets, mix free weights and machines'}
+
+2. Volume Targets per Muscle per Week (adjust for ${goal}):
+   - Each muscle gets ONE dedicated day with high volume
+   - Chest Day: ${goal === 'strength' ? '12-16 sets' : experienceLevel === 'beginner' ? '14-18 sets' : '18-22 sets'}
+   - Back Day: ${goal === 'strength' ? '12-16 sets' : experienceLevel === 'beginner' ? '14-18 sets' : '18-22 sets'}
+   - Shoulders Day: ${goal === 'strength' ? '10-14 sets' : experienceLevel === 'beginner' ? '12-16 sets' : '16-20 sets'}
+   - Arms Day: ${goal === 'strength' ? '10-14 sets' : experienceLevel === 'beginner' ? '12-16 sets' : '16-20 sets'} (split between biceps & triceps)${hasLegs ? `\n   - Legs Day: ${goal === 'strength' ? '12-16 sets' : experienceLevel === 'beginner' ? '14-18 sets' : '18-22 sets'}` : ''}
+
+3. Rep Ranges (${goal.toUpperCase()}):
+   - Compound exercises: ${repRanges.compound}
+   - Accessory exercises: ${repRanges.accessory}
+   - Isolation exercises: ${repRanges.isolation}
+
+4. Exercise Selection:
+   ${experienceLevel === 'beginner' ? '- Favor machines, cables, and dumbbells for safety\n   - Include 1-2 barbell compounds maximum per day\n   - Prioritize controlled, safe movements\n   - 6-8 exercises per day, 14-16 total sets' : '- Balance free weights and machines\n   - Include 2-3 barbell compounds per day\n   - Mix equipment for variety\n   - 8-10 exercises per day, 18-22 total sets'}
+
+   CHEST DAY (${experienceLevel === 'beginner' ? '6-7' : '8-9'} exercises):
+   a) Flat barbell/dumbbell press - ${goal === 'strength' ? '5 sets × 4-6 reps' : '4 sets × 6-8 reps'}
+   b) Incline barbell/dumbbell press - ${goal === 'strength' ? '4 sets × 6-8 reps' : '4 sets × 8-10 reps'}
+   c) Decline or flat variation (different from a) - 3 sets × ${goal === 'endurance' ? '12-15 reps' : '8-12 reps'}
+   d) Incline fly or cable fly - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '10-12 reps'}
+   e) Chest isolation (machine, cable, or dumbbell fly) - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '10-15 reps'}
+   f) Upper chest focus (high incline or low-to-high cable) - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '10-15 reps'}${experienceLevel !== 'beginner' ? `\n   g) Chest stretch/squeeze movement (dumbbell pullover or pec deck) - 3 sets × 12-15 reps\n   h) Finisher (push-up variation or cable work) - 2-3 sets × ${goal === 'endurance' ? '20-25 reps' : '12-20 reps'}` : ''}
+
+   BACK DAY (${experienceLevel === 'beginner' ? '6-7' : '8-9'} exercises):
+   a) Barbell/T-bar row - ${goal === 'strength' ? '5 sets × 4-6 reps' : '4 sets × 6-8 reps'}
+   b) Pull-up or lat pulldown - ${goal === 'strength' ? '4 sets × 4-6 reps' : '4 sets × 6-10 reps'}
+   c) Dumbbell/cable row - 3-4 sets × ${goal === 'endurance' ? '12-15 reps' : '8-12 reps'}
+   d) Wide grip pull or pulldown - 3 sets × ${goal === 'endurance' ? '12-15 reps' : '8-12 reps'}
+   e) Lower lat exercise (straight arm pulldown, pullover) - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '10-15 reps'}
+   f) Traps (shrug or upright row) - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '8-12 reps'}${experienceLevel !== 'beginner' ? `\n   g) Rear delt (face pull or reverse fly) - 3 sets × 12-15 reps\n   h) Finisher (high-rep rows or band work) - 2-3 sets × ${goal === 'endurance' ? '20-25 reps' : '15-20 reps'}` : ''}
+
+   SHOULDERS DAY (${experienceLevel === 'beginner' ? '6-7' : '8-9'} exercises):
+   a) Overhead press (barbell or dumbbell) - ${goal === 'strength' ? '5 sets × 4-6 reps' : '4 sets × 6-8 reps'}
+   b) Lateral raise (dumbbell or cable) - 4 sets × ${goal === 'strength' ? '8-12 reps' : '10-15 reps'}
+   c) Front raise or Arnold press - 3 sets × ${goal === 'endurance' ? '12-15 reps' : '8-12 reps'}
+   d) Rear delt fly (dumbbell, cable, or machine) - 4 sets × ${goal === 'endurance' ? '15-20 reps' : '10-15 reps'}
+   e) Lateral raise variation (machine, cable, or different angle) - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '12-15 reps'}
+   f) Upright row or shrug - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '8-12 reps'}${experienceLevel !== 'beginner' ? `\n   g) Rear delt variation (face pull or reverse pec deck) - 3 sets × 12-15 reps\n   h) Finisher (high-rep lateral raises or drop sets) - 2-3 sets × ${goal === 'endurance' ? '20-25 reps' : '15-20 reps'}` : ''}
+
+   ARMS DAY (${experienceLevel === 'beginner' ? '6-8' : '8-10'} exercises):
+   BICEPS:
+   a) Barbell curl - ${goal === 'strength' ? '4 sets × 6-8 reps' : '4 sets × 8-10 reps'}
+   b) Incline dumbbell curl - 3 sets × ${goal === 'endurance' ? '12-15 reps' : '10-12 reps'}
+   c) Hammer curl - 3 sets × ${goal === 'endurance' ? '12-15 reps' : '10-12 reps'}${experienceLevel !== 'beginner' ? `\n   d) Cable or preacher curl - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '12-15 reps'}` : ''}
+
+   TRICEPS:
+   e) Close-grip bench or dip - ${goal === 'strength' ? '4 sets × 6-8 reps' : '4 sets × 8-10 reps'}
+   f) Overhead triceps extension - 3 sets × ${goal === 'endurance' ? '12-15 reps' : '10-12 reps'}
+   g) Triceps pushdown (cable) - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '10-12 reps'}${experienceLevel !== 'beginner' ? `\n   h) Skull crusher or cable variation - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '12-15 reps'}\n   i) Finisher (superset biceps + triceps) - 2-3 sets × 15-20 reps each` : ''}${hasLegs ? `\n\n   LEGS DAY (${experienceLevel === 'beginner' ? '6-7' : '8-9'} exercises):\n   a) Squat or leg press - ${goal === 'strength' ? '5 sets × 4-6 reps' : '4 sets × 6-10 reps'}\n   b) Romanian deadlift or leg curl - ${goal === 'strength' ? '4 sets × 6-8 reps' : '4 sets × 8-12 reps'}\n   c) Bulgarian split squat or lunge - 3 sets × ${goal === 'endurance' ? '12-15 reps' : '8-12 reps'} per leg\n   d) Leg extension - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '10-15 reps'}\n   e) Leg curl variation - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '10-15 reps'}\n   f) Hip thrust or glute bridge - 3 sets × ${goal === 'endurance' ? '15-20 reps' : '12-15 reps'}${experienceLevel !== 'beginner' ? `\n   g) Calf raise (standing) - 4 sets × ${goal === 'endurance' ? '20-25 reps' : '12-20 reps'}\n   h) Calf raise (seated) or finisher - 3 sets × ${goal === 'endurance' ? '20-25 reps' : '15-20 reps'}` : '\n   g) Calf raise - 3-4 sets × 12-20 reps'}` : ''}
+
+5. PROGRESSIVE OVERLOAD:
+   - Week 1-2: Establish baseline (learn movements, perfect form)
+   - Week 3-4: Add 5-10% load or 1-2 reps
+   - Week 5-6: Add 5-10% load or 1-2 reps
+   - Week 7: Deload (reduce volume by 40%)
+   - Repeat cycle with higher baseline
+
+${userProfile.injuries && userProfile.injuries.length > 0 ? `
+SAFETY CONSIDERATIONS:
+${userProfile.injuries.map((i) => `- ${i.bodyPart}: ${i.restrictions?.join(', ') || 'Modify as needed'}`).join('\n')}
+` : ''}
+
+TASK:
+Design the complete body part split program by selecting exercises from the available database. Return ONLY the exercise ID (not the full name).
+
+Return your response in this EXACT JSON format (no markdown, no explanation, pure JSON):
+{
+  "Chest": [
+    {"exerciseId": "exercise-id-here", "targetSets": 4, "repRangeMin": 6, "repRangeMax": 8, "rationale": "Primary chest compound"},
+    ...
+  ],
+  "Back": [
+    ...
+  ],
+  "Shoulders": [
+    ...
+  ],
+  "Arms": [
+    ...
+  ],${hasLegs ? '\n  "Legs": [\n    ...\n  ],' : ''}
+  "overallRationale": "Brief explanation of program design philosophy",
+  "progressionScheme": "How to progress week to week"
+}
+
+IMPORTANT:
+- Return ONLY valid JSON, no markdown formatting
+- Use actual exercise IDs from the database
+- Each day MUST have ${experienceLevel === 'beginner' ? '6-8' : '8-10'} exercises (following the structure above)
+- Order exercises from most taxing to least (heavy compounds first, isolations last)
+- Arms day: Balance biceps and triceps exercises evenly${hasLegs ? '\n- Legs day: Cover all lower body muscles (quads, hamstrings, glutes, calves)' : ''}`;
+
+  try {
+    console.log('[AI] Generating Body Part Split program...');
+    const aiResponse = await callGeminiAPI(prompt);
+
+    // Parse JSON response
+    let jsonString = aiResponse.trim();
+    if (jsonString.startsWith('```')) {
+      jsonString = jsonString.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    }
+
+    const programData = JSON.parse(jsonString);
+
+    // Build WorkoutPlan object
+    const workoutPlan: WorkoutPlan = {
+      id: `ai-generated-${Date.now()}`,
+      name: `${goal.charAt(0).toUpperCase() + goal.slice(1)} Program - Body Part Split`,
+      trainingSplit: 'body_part',
+      plans: {
+        Chest: {
+          dayType: 'Chest',
+          exercises: programData.Chest.map((ex: any, index: number) => ({
+            exerciseId: ex.exerciseId,
+            order: index,
+            targetSets: ex.targetSets,
+            repRangeMin: ex.repRangeMin,
+            repRangeMax: ex.repRangeMax,
+            notes: ex.rationale,
+          })),
+        },
+        Back: {
+          dayType: 'Back',
+          exercises: programData.Back.map((ex: any, index: number) => ({
+            exerciseId: ex.exerciseId,
+            order: index,
+            targetSets: ex.targetSets,
+            repRangeMin: ex.repRangeMin,
+            repRangeMax: ex.repRangeMax,
+            notes: ex.rationale,
+          })),
+        },
+        Shoulders: {
+          dayType: 'Shoulders',
+          exercises: programData.Shoulders.map((ex: any, index: number) => ({
+            exerciseId: ex.exerciseId,
+            order: index,
+            targetSets: ex.targetSets,
+            repRangeMin: ex.repRangeMin,
+            repRangeMax: ex.repRangeMax,
+            notes: ex.rationale,
+          })),
+        },
+        Arms: {
+          dayType: 'Arms',
+          exercises: programData.Arms.map((ex: any, index: number) => ({
+            exerciseId: ex.exerciseId,
+            order: index,
+            targetSets: ex.targetSets,
+            repRangeMin: ex.repRangeMin,
+            repRangeMax: ex.repRangeMax,
+            notes: ex.rationale,
+          })),
+        },
+        ...(programData.Legs && {
+          Legs: {
+            dayType: 'Legs',
+            exercises: programData.Legs.map((ex: any, index: number) => ({
+              exerciseId: ex.exerciseId,
+              order: index,
+              targetSets: ex.targetSets,
+              repRangeMin: ex.repRangeMin,
+              repRangeMax: ex.repRangeMax,
+              notes: ex.rationale,
+            })),
+          },
+        }),
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    console.log('[AI] Body Part Split program generated successfully');
+    return workoutPlan;
+  } catch (error) {
+    console.error('Error generating body part program:', error);
     throw new Error('Failed to generate workout program. Please try again.');
   }
 }

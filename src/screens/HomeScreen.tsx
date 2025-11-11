@@ -17,10 +17,10 @@ import {
 } from 'react-native';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, addMonths, subMonths, getDay, startOfWeek, endOfWeek } from 'date-fns';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { colors, spacing, typography, getDayTypeColor } from '../theme';
+import { colors, spacing, typography, getDayTypeColor, getDayTypeDisplayName } from '../theme';
 import { useModal } from '../contexts/ModalContext';
 import { DayType, WeeklyProgram, StreakData, Exercise } from '../models/types';
 import {
@@ -33,6 +33,7 @@ import {
   loadMonthlySchedule,
   loadGymSessions,
   loadOutdoorSessions,
+  loadUserProfile,
 } from '../services/storage';
 import { initializeExerciseCatalog } from '../services/exerciseDB';
 import { generateDefaultPlan } from '../services/defaultPlan';
@@ -61,6 +62,7 @@ export default function HomeScreen() {
   const [viewMode, setViewMode] = useState<'calendar' | 'exercises' | 'change'>('calendar');
   const [workoutPlan, setWorkoutPlan] = useState<any>(null);
   const [exerciseCatalog, setExerciseCatalog] = useState<Exercise[]>([]);
+  const [trainingSplit, setTrainingSplit] = useState<'muscle_group' | 'body_part'>('muscle_group');
 
   useEffect(() => {
     initializeApp();
@@ -69,6 +71,13 @@ export default function HomeScreen() {
   useEffect(() => {
     loadScheduleForMonth();
   }, [currentMonth]);
+
+  // Reload schedule when screen comes into focus (e.g., after completing ProfileSetup)
+  useFocusEffect(
+    React.useCallback(() => {
+      loadScheduleForMonth();
+    }, [currentMonth])
+  );
 
   const loadScheduleForMonth = async () => {
     const monthStart = startOfMonth(currentMonth);
@@ -81,7 +90,10 @@ export default function HomeScreen() {
     const gymSessions = await loadGymSessions();
     const outdoorSessions = await loadOutdoorSessions();
 
-    // Generate default schedule for the month
+    // Load weekly program to determine schedule
+    const weeklyProgram = await loadWeeklyProgram();
+
+    // Generate schedule for the month based on weekly program
     const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
     const monthSchedule: DaySchedule[] = days.map((date) => {
       const dateString = format(date, 'yyyy-MM-dd');
@@ -101,12 +113,16 @@ export default function HomeScreen() {
         };
       }
 
-      // Default schedule: Mon=Push, Wed=Pull, Fri=Upper2, Sun=Outdoor
+      // Use weekly program to determine day type
       let defaultDayType: DayType = 'Rest';
-      if (dayOfWeek === 1) defaultDayType = 'Push';
-      else if (dayOfWeek === 3) defaultDayType = 'Pull';
-      else if (dayOfWeek === 5) defaultDayType = 'Upper2';
-      else if (dayOfWeek === 0) defaultDayType = 'Outdoor';
+      if (weeklyProgram) {
+        const trainingDay = weeklyProgram.trainingDays.find(
+          (td) => td.dayOfWeek === dayOfWeek && td.enabled
+        );
+        if (trainingDay) {
+          defaultDayType = trainingDay.dayType;
+        }
+      }
 
       const isCompleted =
         (defaultDayType !== 'Outdoor' && defaultDayType !== 'Rest' && gymSessions?.some((s) => s.date === dateString && s.completed)) ||
@@ -124,6 +140,18 @@ export default function HomeScreen() {
 
   const initializeApp = async () => {
     try {
+      // Check if user profile exists - if not, navigate to setup
+      const userProfile = await loadUserProfile();
+      if (!userProfile) {
+        // No profile found, navigate to ProfileSetup
+        setLoading(false);
+        navigation.navigate('ProfileSetup');
+        return;
+      }
+
+      // Load training split preference
+      setTrainingSplit(userProfile.trainingSplit || 'muscle_group');
+
       // Initialize exercise catalog
       const catalog = await initializeExerciseCatalog();
       setExerciseCatalog(catalog.exercises);
@@ -166,14 +194,14 @@ export default function HomeScreen() {
       setStreaks(streakData);
 
       // Load today's exercises if it's a workout day
-      if (todayTraining && todayTraining.dayType !== 'Rest') {
+      if (todayTraining && todayTraining.dayType !== 'Rest' && todayTraining.dayType !== 'Outdoor') {
         const workoutPlan = await loadWorkoutPlan();
         if (workoutPlan) {
-          const dayPlan = workoutPlan.plans[todayTraining.dayType];
+          const dayPlan = workoutPlan.plans[todayTraining.dayType as keyof typeof workoutPlan.plans];
           if (dayPlan) {
             const dayExercises = dayPlan.exercises
-              .sort((a, b) => a.order - b.order)
-              .map((pe) => catalog.exercises.find((ex) => ex.id === pe.exerciseId))
+              .sort((a: any, b: any) => a.order - b.order)
+              .map((pe: any) => catalog.exercises.find((ex) => ex.id === pe.exerciseId))
               .filter(Boolean) as Exercise[];
             setTodayExercises(dayExercises);
           }
@@ -292,12 +320,25 @@ export default function HomeScreen() {
 
   const getDayColor = (dayType: DayType) => {
     switch (dayType) {
+      // Muscle group split
       case 'Push':
         return colors.dayPush;
       case 'Pull':
         return colors.dayPull;
       case 'Upper2':
         return colors.dayUpper;
+      case 'Legs':
+        return colors.dayLegs;
+      // Body part split
+      case 'Chest':
+        return colors.dayChest;
+      case 'Back':
+        return colors.dayBack;
+      case 'Shoulders':
+        return colors.dayShoulders;
+      case 'Arms':
+        return colors.dayArms;
+      // Special
       case 'Outdoor':
         return colors.dayOutdoor;
       case 'Rest':
@@ -397,6 +438,11 @@ export default function HomeScreen() {
                             {daySchedule.dayType === 'Push' ? 'P' :
                              daySchedule.dayType === 'Pull' ? 'Pl' :
                              daySchedule.dayType === 'Upper2' ? 'U' :
+                             daySchedule.dayType === 'Legs' ? 'L' :
+                             daySchedule.dayType === 'Chest' ? 'C' :
+                             daySchedule.dayType === 'Back' ? 'B' :
+                             daySchedule.dayType === 'Shoulders' ? 'S' :
+                             daySchedule.dayType === 'Arms' ? 'A' :
                              daySchedule.dayType === 'Outdoor' ? 'O' : ''}
                           </Text>
                         )}
@@ -420,10 +466,20 @@ export default function HomeScreen() {
     const completedWorkouts = monthSchedule.filter((day) => day.completed && day.dayType !== 'Rest').length;
     const adherence = totalWorkouts > 0 ? Math.round((completedWorkouts / totalWorkouts) * 100) : 0;
 
+    // Calculate day type counts
+    const outdoorDays = monthSchedule.filter((day) => day.dayType === 'Outdoor').length;
+    const legsDays = monthSchedule.filter((day) => day.dayType === 'Legs').length;
+
+    // Muscle group split counts
     const pushDays = monthSchedule.filter((day) => day.dayType === 'Push').length;
     const pullDays = monthSchedule.filter((day) => day.dayType === 'Pull').length;
     const upper2Days = monthSchedule.filter((day) => day.dayType === 'Upper2').length;
-    const outdoorDays = monthSchedule.filter((day) => day.dayType === 'Outdoor').length;
+
+    // Body part split counts
+    const chestDays = monthSchedule.filter((day) => day.dayType === 'Chest').length;
+    const backDays = monthSchedule.filter((day) => day.dayType === 'Back').length;
+    const shouldersDays = monthSchedule.filter((day) => day.dayType === 'Shoulders').length;
+    const armsDays = monthSchedule.filter((day) => day.dayType === 'Arms').length;
 
     return (
       <View style={styles.statsContainer}>
@@ -441,22 +497,70 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.dayTypeCounts}>
-          <View style={styles.countItem}>
-            <View style={[styles.countDot, { backgroundColor: colors.dayPush }]} />
-            <Text style={styles.countText}>Push: {pushDays}</Text>
-          </View>
-          <View style={styles.countItem}>
-            <View style={[styles.countDot, { backgroundColor: colors.dayPull }]} />
-            <Text style={styles.countText}>Pull: {pullDays}</Text>
-          </View>
-          <View style={styles.countItem}>
-            <View style={[styles.countDot, { backgroundColor: colors.dayUpper }]} />
-            <Text style={styles.countText}>Upper2: {upper2Days}</Text>
-          </View>
-          <View style={styles.countItem}>
-            <View style={[styles.countDot, { backgroundColor: colors.dayOutdoor }]} />
-            <Text style={styles.countText}>Outdoor: {outdoorDays}</Text>
-          </View>
+          {trainingSplit === 'muscle_group' ? (
+            <>
+              {/* Muscle Group Split */}
+              {pushDays > 0 && (
+                <View style={styles.countItem}>
+                  <View style={[styles.countDot, { backgroundColor: colors.dayPush }]} />
+                  <Text style={styles.countText}>Push: {pushDays}</Text>
+                </View>
+              )}
+              {pullDays > 0 && (
+                <View style={styles.countItem}>
+                  <View style={[styles.countDot, { backgroundColor: colors.dayPull }]} />
+                  <Text style={styles.countText}>Pull: {pullDays}</Text>
+                </View>
+              )}
+              {upper2Days > 0 && (
+                <View style={styles.countItem}>
+                  <View style={[styles.countDot, { backgroundColor: colors.dayUpper }]} />
+                  <Text style={styles.countText}>{getDayTypeDisplayName('Upper2')}: {upper2Days}</Text>
+                </View>
+              )}
+            </>
+          ) : (
+            <>
+              {/* Body Part Split */}
+              {chestDays > 0 && (
+                <View style={styles.countItem}>
+                  <View style={[styles.countDot, { backgroundColor: colors.dayChest }]} />
+                  <Text style={styles.countText}>Chest: {chestDays}</Text>
+                </View>
+              )}
+              {backDays > 0 && (
+                <View style={styles.countItem}>
+                  <View style={[styles.countDot, { backgroundColor: colors.dayBack }]} />
+                  <Text style={styles.countText}>Back: {backDays}</Text>
+                </View>
+              )}
+              {shouldersDays > 0 && (
+                <View style={styles.countItem}>
+                  <View style={[styles.countDot, { backgroundColor: colors.dayShoulders }]} />
+                  <Text style={styles.countText}>Shoulders: {shouldersDays}</Text>
+                </View>
+              )}
+              {armsDays > 0 && (
+                <View style={styles.countItem}>
+                  <View style={[styles.countDot, { backgroundColor: colors.dayArms }]} />
+                  <Text style={styles.countText}>Arms: {armsDays}</Text>
+                </View>
+              )}
+            </>
+          )}
+          {/* Show Legs and Outdoor for both splits */}
+          {legsDays > 0 && (
+            <View style={styles.countItem}>
+              <View style={[styles.countDot, { backgroundColor: colors.dayLegs }]} />
+              <Text style={styles.countText}>Legs: {legsDays}</Text>
+            </View>
+          )}
+          {outdoorDays > 0 && (
+            <View style={styles.countItem}>
+              <View style={[styles.countDot, { backgroundColor: colors.dayOutdoor }]} />
+              <Text style={styles.countText}>Outdoor: {outdoorDays}</Text>
+            </View>
+          )}
         </View>
       </View>
     );
@@ -774,12 +878,25 @@ export default function HomeScreen() {
 
 function getDayDescription(dayType: DayType): string {
   switch (dayType) {
+    // Muscle group split
     case 'Push':
       return 'Chest, shoulders, and triceps';
     case 'Pull':
       return 'Back and biceps';
     case 'Upper2':
       return 'Full upper body mix';
+    case 'Legs':
+      return 'Quads, hamstrings, glutes, and calves';
+    // Body part split
+    case 'Chest':
+      return 'Chest focused training';
+    case 'Back':
+      return 'Back and lats focused';
+    case 'Shoulders':
+      return 'Deltoids and traps';
+    case 'Arms':
+      return 'Biceps and triceps';
+    // Special
     case 'Outdoor':
       return 'Legs, core, and cardio';
     default:

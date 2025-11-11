@@ -34,7 +34,7 @@ const MIN_SESSIONS_FOR_RECOMMENDATION = 1;
  */
 export async function getSetRecommendation(
   exerciseId: string,
-  dayType: 'Push' | 'Pull' | 'Upper2',
+  dayType: GymSession['dayType'],
   setNumber: number,
   currentSessionSets: SetLog[]
 ): Promise<AIRecommendation> {
@@ -61,7 +61,7 @@ export async function getSetRecommendation(
     // Fallback to plan target
     const plan = await loadWorkoutPlan();
     if (plan) {
-      const plannedEx = plan.plans[dayType].exercises.find(pe => pe.exerciseId === exerciseId);
+      const plannedEx = plan.plans[dayType]?.exercises.find(pe => pe.exerciseId === exerciseId);
       if (plannedEx) {
         return {
           weight: 0, // User must set initial
@@ -79,7 +79,7 @@ export async function getSetRecommendation(
  */
 async function calculateBaselineRecommendation(
   exerciseId: string,
-  dayType: 'Push' | 'Pull' | 'Upper2'
+  dayType: GymSession['dayType']
 ): Promise<AIRecommendation> {
   const sessions = await loadGymSessions();
   const plan = await loadWorkoutPlan();
@@ -101,7 +101,7 @@ async function calculateBaselineRecommendation(
 
   // No history found, use plan target
   if (plan) {
-    const plannedEx = plan.plans[dayType].exercises.find(pe => pe.exerciseId === exerciseId);
+    const plannedEx = plan.plans[dayType]?.exercises.find(pe => pe.exerciseId === exerciseId);
     if (plannedEx) {
       return {
         weight: 0, // User sets initial weight
@@ -139,7 +139,7 @@ export async function analyzeSessionAndUpdateRecommendations(
       const { exerciseId } = exerciseLog;
 
       // Get planned exercise
-      const plannedEx = plan.plans[session.dayType].exercises.find(
+      const plannedEx = plan.plans[session.dayType]?.exercises.find(
         pe => pe.exerciseId === exerciseId
       );
       if (!plannedEx) continue;

@@ -17,6 +17,7 @@ export function generateDefaultPlan(exercises: Exercise[]): WorkoutPlan {
   return {
     id: 'default-plan-v1',
     name: 'Upper+Outdoor Default Plan',
+    trainingSplit: 'muscle_group',
     plans: {
       Push: createPushPlan(pushExercises),
       Pull: createPullPlan(pullExercises),
@@ -224,6 +225,7 @@ export function createMinimalFallbackPlan(): WorkoutPlan {
   return {
     id: 'fallback-plan-v1',
     name: 'Minimal Upper Plan',
+    trainingSplit: 'muscle_group',
     plans: {
       Push: {
         dayType: 'Push',

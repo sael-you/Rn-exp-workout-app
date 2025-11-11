@@ -17,8 +17,8 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { colors, spacing, typography } from '../theme';
 import { useModal } from '../contexts/ModalContext';
-import { TrainingGoal, ExperienceLevel, UserProfile, UserInjury } from '../models/types';
-import { saveUserProfile, saveWorkoutPlan } from '../services/storage';
+import { TrainingGoal, ExperienceLevel, TrainingSplit, UserProfile, UserInjury, WeeklyProgram, TrainingDay } from '../models/types';
+import { saveUserProfile, saveWorkoutPlan, saveWeeklyProgram } from '../services/storage';
 import { generateWorkoutProgram } from '../services/geminiAI';
 import { initializeExerciseCatalog } from '../services/exerciseDB';
 
@@ -29,13 +29,32 @@ export default function ProfileSetupScreen({ navigation }: Props) {
   const [step, setStep] = useState(1);
   const [primaryGoal, setPrimaryGoal] = useState<TrainingGoal>('hypertrophy');
   const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>('intermediate');
+  const [trainingSplit, setTrainingSplit] = useState<TrainingSplit>('muscle_group'); // NEW
   const [hasInjuries, setHasInjuries] = useState(false);
   const [injuryText, setInjuryText] = useState('');
   const [mobilityIssuesText, setMobilityIssuesText] = useState('');
+  const [workoutLocation, setWorkoutLocation] = useState<'gym' | 'home'>('gym');
+  const [weeklyFrequency, setWeeklyFrequency] = useState(3);
+
+  // Auto-adjust frequency when switching to body part split
+  React.useEffect(() => {
+    if (trainingSplit === 'body_part' && weeklyFrequency < 4) {
+      setWeeklyFrequency(4);
+    }
+  }, [trainingSplit]);
+  const [legTrainingPreference, setLegTrainingPreference] = useState<'none' | 'spread' | 'dedicated'>('spread');
+  const [includeOutdoor, setIncludeOutdoor] = useState(true);
+  const [outdoorDayPreference, setOutdoorDayPreference] = useState<number>(0); // Sunday by default
   const [generating, setGenerating] = useState(false);
 
   const handleNext = () => {
-    if (step < 3) {
+    // Validate frequency for body part split
+    if (step === 6 && trainingSplit === 'body_part' && weeklyFrequency < 4) {
+      showError('Frequency Too Low', 'Body part splits require at least 4 days per week to train all muscles effectively. Please choose 4+ days or switch to Muscle Group Training.');
+      return;
+    }
+
+    if (step < 7) {
       setStep(step + 1);
     } else {
       handleGenerateProgram();
@@ -77,8 +96,13 @@ export default function ProfileSetupScreen({ navigation }: Props) {
         updatedAt: new Date().toISOString(),
         primaryGoal,
         experienceLevel,
+        trainingSplit, // NEW: training split preference
         injuries: injuries.length > 0 ? injuries : undefined,
         mobilityIssues: mobilityIssues.length > 0 ? mobilityIssues : undefined,
+        workoutLocation,
+        weeklyFrequency,
+        legTrainingPreference,
+        outdoorDayPreference: includeOutdoor ? outdoorDayPreference : undefined,
         aiGeneratedProgramDate: new Date().toISOString(),
       };
       console.log('Profile created:', {
@@ -108,42 +132,208 @@ export default function ProfileSetupScreen({ navigation }: Props) {
       console.log('=== Generated Workout Plan ===');
       console.log('Plan ID:', workoutPlan.id);
       console.log('Plan name:', workoutPlan.name);
+      console.log('Training Split:', workoutPlan.trainingSplit);
       console.log('User Goal:', profile.primaryGoal);
       console.log('User Experience:', profile.experienceLevel);
-      console.log('\n📋 PUSH DAY (' + workoutPlan.plans.Push?.exercises?.length + ' exercises):');
-      workoutPlan.plans.Push.exercises.forEach((ex, i) => {
-        const exercise = catalog.exercises.find(e => e.id === ex.exerciseId);
-        console.log(`  ${i + 1}. ${exercise?.name || ex.exerciseId}`);
-        console.log(`     Equipment: ${exercise?.equipment || 'unknown'}`);
-        console.log(`     Target: ${exercise?.target || 'unknown'}`);
-        console.log(`     Volume: ${ex.targetSets} sets × ${ex.repRangeMin}-${ex.repRangeMax} reps`);
-        console.log(`     Rationale: ${ex.notes || 'none'}`);
-      });
 
-      console.log('\n📋 PULL DAY (' + workoutPlan.plans.Pull?.exercises?.length + ' exercises):');
-      workoutPlan.plans.Pull.exercises.forEach((ex, i) => {
-        const exercise = catalog.exercises.find(e => e.id === ex.exerciseId);
-        console.log(`  ${i + 1}. ${exercise?.name || ex.exerciseId}`);
-        console.log(`     Equipment: ${exercise?.equipment || 'unknown'}`);
-        console.log(`     Target: ${exercise?.target || 'unknown'}`);
-        console.log(`     Volume: ${ex.targetSets} sets × ${ex.repRangeMin}-${ex.repRangeMax} reps`);
-        console.log(`     Rationale: ${ex.notes || 'none'}`);
-      });
-
-      console.log('\n📋 UPPER2 DAY (' + workoutPlan.plans.Upper2?.exercises?.length + ' exercises):');
-      workoutPlan.plans.Upper2.exercises.forEach((ex, i) => {
-        const exercise = catalog.exercises.find(e => e.id === ex.exerciseId);
-        console.log(`  ${i + 1}. ${exercise?.name || ex.exerciseId}`);
-        console.log(`     Equipment: ${exercise?.equipment || 'unknown'}`);
-        console.log(`     Target: ${exercise?.target || 'unknown'}`);
-        console.log(`     Volume: ${ex.targetSets} sets × ${ex.repRangeMin}-${ex.repRangeMax} reps`);
-        console.log(`     Rationale: ${ex.notes || 'none'}`);
+      // Log exercises based on split type
+      Object.entries(workoutPlan.plans).forEach(([dayType, dayPlan]) => {
+        if (dayPlan && dayPlan.exercises) {
+          console.log(`\n📋 ${dayType.toUpperCase()} DAY (${dayPlan.exercises.length} exercises):`);
+          dayPlan.exercises.forEach((ex, i) => {
+            const exercise = catalog.exercises.find(e => e.id === ex.exerciseId);
+            console.log(`  ${i + 1}. ${exercise?.name || ex.exerciseId}`);
+            console.log(`     Equipment: ${exercise?.equipment || 'unknown'}`);
+            console.log(`     Target: ${exercise?.target || 'unknown'}`);
+            console.log(`     Volume: ${ex.targetSets} sets × ${ex.repRangeMin}-${ex.repRangeMax} reps`);
+            console.log(`     Rationale: ${ex.notes || 'none'}`);
+          });
+        }
       });
 
       // Save workout plan
       console.log('Saving workout plan to storage...');
       await saveWorkoutPlan(workoutPlan);
       console.log('Workout plan saved to storage');
+
+      // Create weekly program based on user preferences
+      console.log('Creating weekly program...');
+
+      // Determine which days to schedule based on training split and frequency
+      const trainingDays: TrainingDay[] = [];
+      let dayId = 1;
+
+      // Reserve outdoor day first to avoid conflicts
+      const reservedDay = includeOutdoor ? outdoorDayPreference : -1;
+      const usedDays = new Set<number>();
+      if (reservedDay >= 0) {
+        usedDays.add(reservedDay);
+      }
+
+      // Helper function to get available days (excluding outdoor day and already used days)
+      const getAvailableDays = (): number[] => {
+        const allDays = [1, 2, 3, 4, 5, 6]; // Mon-Sat (avoid Sunday for gym)
+        return allDays.filter(day => !usedDays.has(day));
+      };
+
+      // Helper function to assign gym day, avoiding conflicts
+      const assignGymDay = (preferredDay: number): number => {
+        // If preferred day is available, use it
+        if (!usedDays.has(preferredDay)) {
+          usedDays.add(preferredDay);
+          return preferredDay;
+        }
+
+        // Otherwise, find the closest available day
+        const availableDays = getAvailableDays();
+        if (availableDays.length === 0) {
+          // No days available (shouldn't happen with valid configs)
+          console.error('No available days for gym training!');
+          return preferredDay; // Fallback
+        }
+
+        // Find closest available day to preferred day
+        let closestDay = availableDays[0];
+        let minDistance = Math.abs(closestDay - preferredDay);
+
+        for (const day of availableDays) {
+          const distance = Math.abs(day - preferredDay);
+          if (distance < minDistance) {
+            minDistance = distance;
+            closestDay = day;
+          }
+        }
+
+        usedDays.add(closestDay);
+        console.log(`Shifted gym day from ${preferredDay} to ${closestDay} to avoid conflict`);
+        return closestDay;
+      };
+
+      if (trainingSplit === 'muscle_group') {
+        // === MUSCLE GROUP SPLIT (Push/Pull/Legs) ===
+        // 3x: Mon (Push), Wed (Pull), Fri (Upper2 or Legs)
+        // 4x: Mon (Push), Tue (Pull), Thu (Legs), Sat (Upper2)
+        // 5x: Mon (Push), Tue (Pull), Wed (Legs), Fri (Upper2), Sat (Push)
+
+        if (weeklyFrequency === 3) {
+          if (legTrainingPreference === 'dedicated') {
+            // 3x with dedicated leg day: Mon (Push), Wed (Pull), Fri (Legs)
+            trainingDays.push(
+              { id: String(dayId++), dayOfWeek: assignGymDay(1), dayType: 'Push', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(3), dayType: 'Pull', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(5), dayType: 'Legs', enabled: true }
+            );
+          } else {
+            // 3x standard PPL: Mon (Push), Wed (Pull), Fri (Upper2)
+            trainingDays.push(
+              { id: String(dayId++), dayOfWeek: assignGymDay(1), dayType: 'Push', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(3), dayType: 'Pull', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(5), dayType: 'Upper2', enabled: true }
+            );
+          }
+        } else if (weeklyFrequency === 4) {
+          if (legTrainingPreference === 'dedicated') {
+            // 4x with dedicated leg day: Mon (Push), Tue (Pull), Thu (Legs), Sat (Upper2)
+            trainingDays.push(
+              { id: String(dayId++), dayOfWeek: assignGymDay(1), dayType: 'Push', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(2), dayType: 'Pull', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(4), dayType: 'Legs', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(6), dayType: 'Upper2', enabled: true }
+            );
+          } else {
+            // 4x without dedicated legs: Mon (Push), Tue (Pull), Thu (Upper2), Sat (Push)
+            trainingDays.push(
+              { id: String(dayId++), dayOfWeek: assignGymDay(1), dayType: 'Push', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(2), dayType: 'Pull', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(4), dayType: 'Upper2', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(6), dayType: 'Push', enabled: true }
+            );
+          }
+        } else if (weeklyFrequency === 5) {
+          if (legTrainingPreference === 'dedicated') {
+            // 5x with dedicated leg day: Mon (Push), Tue (Pull), Wed (Legs), Fri (Upper2), Sat (Push)
+            trainingDays.push(
+              { id: String(dayId++), dayOfWeek: assignGymDay(1), dayType: 'Push', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(2), dayType: 'Pull', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(3), dayType: 'Legs', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(5), dayType: 'Upper2', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(6), dayType: 'Push', enabled: true }
+            );
+          } else {
+            // 5x without dedicated legs: Mon (Push), Tue (Pull), Wed (Upper2), Fri (Push), Sat (Pull)
+            trainingDays.push(
+              { id: String(dayId++), dayOfWeek: assignGymDay(1), dayType: 'Push', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(2), dayType: 'Pull', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(3), dayType: 'Upper2', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(5), dayType: 'Push', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(6), dayType: 'Pull', enabled: true }
+            );
+          }
+        }
+      } else {
+        // === BODY PART SPLIT (Chest/Back/Shoulders/Arms) ===
+        // 4x: Mon (Chest), Tue (Back), Thu (Shoulders), Sat (Arms)
+        // 5x: Mon (Chest), Tue (Back), Wed (Shoulders), Fri (Arms), Sat (Legs)
+
+        if (weeklyFrequency === 4) {
+          if (legTrainingPreference === 'dedicated') {
+            // 4x with legs: Chest, Back, Shoulders, Legs (Arms get less priority)
+            trainingDays.push(
+              { id: String(dayId++), dayOfWeek: assignGymDay(1), dayType: 'Chest', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(2), dayType: 'Back', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(4), dayType: 'Shoulders', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(6), dayType: 'Legs', enabled: true }
+            );
+          } else {
+            // 4x standard: Chest, Back, Shoulders, Arms
+            trainingDays.push(
+              { id: String(dayId++), dayOfWeek: assignGymDay(1), dayType: 'Chest', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(2), dayType: 'Back', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(4), dayType: 'Shoulders', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(6), dayType: 'Arms', enabled: true }
+            );
+          }
+        } else if (weeklyFrequency === 5) {
+          if (legTrainingPreference === 'dedicated') {
+            // 5x full split: Chest, Back, Shoulders, Arms, Legs
+            trainingDays.push(
+              { id: String(dayId++), dayOfWeek: assignGymDay(1), dayType: 'Chest', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(2), dayType: 'Back', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(3), dayType: 'Shoulders', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(5), dayType: 'Arms', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(6), dayType: 'Legs', enabled: true }
+            );
+          } else {
+            // 5x upper only: Chest x2, Back x2, Shoulders
+            trainingDays.push(
+              { id: String(dayId++), dayOfWeek: assignGymDay(1), dayType: 'Chest', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(2), dayType: 'Back', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(3), dayType: 'Shoulders', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(5), dayType: 'Arms', enabled: true },
+              { id: String(dayId++), dayOfWeek: assignGymDay(6), dayType: 'Chest', enabled: true }
+            );
+          }
+        }
+      }
+
+      // Add outdoor day if user wants it
+      if (includeOutdoor && outdoorDayPreference !== undefined) {
+        trainingDays.push({
+          id: String(dayId++),
+          dayOfWeek: outdoorDayPreference,
+          dayType: 'Outdoor',
+          enabled: true,
+        });
+      }
+
+      const weeklyProgram: WeeklyProgram = {
+        trainingDays,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      await saveWeeklyProgram(weeklyProgram);
+      console.log('Weekly program created and saved:', weeklyProgram);
 
       setGenerating(false);
 
@@ -183,7 +373,7 @@ export default function ProfileSetupScreen({ navigation }: Props) {
     <View style={styles.container}>
       {/* Progress Indicator */}
       <View style={styles.progressContainer}>
-        {[1, 2, 3].map((s) => (
+        {[1, 2, 3, 4, 5, 6, 7].map((s) => (
           <View
             key={s}
             style={[styles.progressDot, step >= s && styles.progressDotActive]}
@@ -282,8 +472,46 @@ export default function ProfileSetupScreen({ navigation }: Props) {
           </View>
         )}
 
-        {/* Step 3: Injuries & Limitations */}
+        {/* Step 3: Training Split (NEW) */}
         {step === 3 && (
+          <View>
+            <Text style={styles.title}>Training approach</Text>
+            <Text style={styles.subtitle}>
+              Choose how you want to organize your training
+            </Text>
+
+            <TouchableOpacity
+              style={[styles.optionCard, trainingSplit === 'muscle_group' && styles.optionCardSelected]}
+              onPress={() => setTrainingSplit('muscle_group')}
+            >
+              <Text style={styles.optionTitle}>💪 Muscle Group Training (Push/Pull/Legs)</Text>
+              <Text style={styles.optionDescription}>
+                Train multiple muscles together. Hit each muscle 2x per week.
+                {'\n\n'}✓ More efficient workouts (6-7 exercises)
+                {'\n'}✓ Higher frequency per muscle
+                {'\n'}✓ Best for: Strength, Hypertrophy, General Fitness
+                {'\n'}✓ Works with: 3+ days per week
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.optionCard, trainingSplit === 'body_part' && styles.optionCardSelected]}
+              onPress={() => setTrainingSplit('body_part')}
+            >
+              <Text style={styles.optionTitle}>🎯 Body Part Split (Chest/Back/etc.)</Text>
+              <Text style={styles.optionDescription}>
+                Dedicate each day to one muscle. Higher volume per session.
+                {'\n\n'}✓ Maximum isolation (8-10 exercises per day)
+                {'\n'}✓ Detailed muscle sculpting
+                {'\n'}✓ Best for: Advanced Hypertrophy
+                {'\n'}⚠️ Requires: 4-5+ days per week
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Step 4: Injuries & Limitations */}
+        {step === 4 && (
           <View>
             <Text style={styles.title}>Any injuries or limitations?</Text>
             <Text style={styles.subtitle}>
@@ -327,6 +555,167 @@ export default function ProfileSetupScreen({ navigation }: Props) {
             )}
           </View>
         )}
+
+        {/* Step 5: Workout Location */}
+        {step === 5 && (
+          <View>
+            <Text style={styles.title}>Where do you train?</Text>
+            <Text style={styles.subtitle}>
+              This helps us select exercises appropriate for your equipment access
+            </Text>
+
+            <TouchableOpacity
+              style={[styles.optionCard, workoutLocation === 'gym' && styles.optionCardSelected]}
+              onPress={() => setWorkoutLocation('gym')}
+            >
+              <Text style={styles.optionTitle}>🏋️ Gym</Text>
+              <Text style={styles.optionDescription}>
+                Access to barbells, machines, cables, and full equipment
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.optionCard, workoutLocation === 'home' && styles.optionCardSelected]}
+              onPress={() => setWorkoutLocation('home')}
+            >
+              <Text style={styles.optionTitle}>🏠 Home Workout</Text>
+              <Text style={styles.optionDescription}>
+                Bodyweight, dumbbells, resistance bands, minimal equipment
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Step 6: Weekly Frequency & Leg Training */}
+        {step === 6 && (
+          <View>
+            <Text style={styles.title}>Training frequency & leg focus</Text>
+            <Text style={styles.subtitle}>
+              How many times per week can you train?
+            </Text>
+
+            <View style={styles.frequencySelector}>
+              {(trainingSplit === 'body_part' ? [4, 5] : [3, 4, 5]).map((freq) => (
+                <TouchableOpacity
+                  key={freq}
+                  style={[
+                    styles.frequencyButton,
+                    weeklyFrequency === freq && styles.frequencyButtonSelected,
+                  ]}
+                  onPress={() => setWeeklyFrequency(freq)}
+                >
+                  <Text
+                    style={[
+                      styles.frequencyButtonText,
+                      weeklyFrequency === freq && styles.frequencyButtonTextSelected,
+                    ]}
+                  >
+                    {freq}x
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {trainingSplit === 'body_part' && (
+              <Text style={styles.infoText}>
+                Body part splits require 4-5 days per week to train all muscle groups effectively
+              </Text>
+            )}
+
+            <Text style={[styles.subtitle, { marginTop: spacing.xl, marginBottom: spacing.md }]}>
+              Leg training preference
+            </Text>
+
+            <TouchableOpacity
+              style={[styles.optionCard, legTrainingPreference === 'none' && styles.optionCardSelected]}
+              onPress={() => setLegTrainingPreference('none')}
+            >
+              <Text style={styles.optionTitle}>No Leg Training</Text>
+              <Text style={styles.optionDescription}>
+                Upper body focus only - no leg exercises in gym
+              </Text>
+            </TouchableOpacity>
+
+            {trainingSplit === 'muscle_group' && (
+              <TouchableOpacity
+                style={[styles.optionCard, legTrainingPreference === 'spread' && styles.optionCardSelected]}
+                onPress={() => setLegTrainingPreference('spread')}
+              >
+                <Text style={styles.optionTitle}>Legs Across Sessions</Text>
+                <Text style={styles.optionDescription}>
+                  Add 1 leg exercise to each gym day (3x/week leg frequency)
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={[styles.optionCard, legTrainingPreference === 'dedicated' && styles.optionCardSelected]}
+              onPress={() => setLegTrainingPreference('dedicated')}
+            >
+              <Text style={styles.optionTitle}>Dedicated Leg Day</Text>
+              <Text style={styles.optionDescription}>
+                Separate leg day with {trainingSplit === 'body_part' ? '6-8' : '4-5'} exercises (higher volume)
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Step 7: Outdoor Day Preference */}
+        {step === 7 && (
+          <View>
+            <Text style={styles.title}>Outdoor training day</Text>
+            <Text style={styles.subtitle}>
+              Which day works best for your outdoor cardio & legs session?
+            </Text>
+
+            <TouchableOpacity
+              style={[styles.checkboxRow, includeOutdoor && styles.checkboxRowChecked]}
+              onPress={() => setIncludeOutdoor(!includeOutdoor)}
+            >
+              <View style={[styles.checkbox, includeOutdoor && styles.checkboxChecked]}>
+                {includeOutdoor && <Text style={styles.checkmark}>✓</Text>}
+              </View>
+              <Text style={styles.checkboxLabel}>Include outdoor day in program</Text>
+            </TouchableOpacity>
+
+            {includeOutdoor && (
+              <>
+                <Text style={[styles.inputLabel, { marginTop: spacing.lg, marginBottom: spacing.md }]}>
+                  Preferred day for outdoor training
+                </Text>
+                <View style={styles.daySelector}>
+                  {[
+                    { label: 'Sun', value: 0 },
+                    { label: 'Mon', value: 1 },
+                    { label: 'Tue', value: 2 },
+                    { label: 'Wed', value: 3 },
+                    { label: 'Thu', value: 4 },
+                    { label: 'Fri', value: 5 },
+                    { label: 'Sat', value: 6 },
+                  ].map((day) => (
+                    <TouchableOpacity
+                      key={day.value}
+                      style={[
+                        styles.dayButton,
+                        outdoorDayPreference === day.value && styles.dayButtonSelected,
+                      ]}
+                      onPress={() => setOutdoorDayPreference(day.value)}
+                    >
+                      <Text
+                        style={[
+                          styles.dayButtonText,
+                          outdoorDayPreference === day.value && styles.dayButtonTextSelected,
+                        ]}
+                      >
+                        {day.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
+          </View>
+        )}
       </ScrollView>
 
       {/* Navigation Buttons */}
@@ -341,7 +730,7 @@ export default function ProfileSetupScreen({ navigation }: Props) {
           onPress={handleNext}
         >
           <Text style={styles.nextButtonText}>
-            {step === 3 ? 'Generate Program' : 'Next'}
+            {step === 7 ? 'Generate Program' : 'Next'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -514,6 +903,71 @@ const styles = StyleSheet.create({
     fontSize: typography.fontSize.base,
     color: colors.textSecondary,
     marginTop: spacing.sm,
+    textAlign: 'center',
+  },
+  frequencySelector: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  frequencyButton: {
+    flex: 1,
+    paddingVertical: spacing.lg,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: colors.gray300,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+  },
+  frequencyButtonSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '20',
+  },
+  frequencyButtonText: {
+    fontSize: typography.fontSize.xl,
+    fontWeight: typography.fontWeight.bold,
+    color: colors.textPrimary,
+  },
+  frequencyButtonTextSelected: {
+    color: colors.primary,
+  },
+  checkboxSubtext: {
+    fontSize: typography.fontSize.sm,
+    color: colors.textSecondary,
+    marginTop: spacing.xs / 2,
+    lineHeight: typography.fontSize.sm * 1.4,
+  },
+  daySelector: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  dayButton: {
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: colors.gray300,
+    backgroundColor: colors.surface,
+  },
+  dayButtonSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '20',
+  },
+  dayButtonText: {
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.textPrimary,
+  },
+  dayButtonTextSelected: {
+    color: colors.primary,
+  },
+  infoText: {
+    fontSize: typography.fontSize.sm,
+    color: colors.info,
+    marginTop: spacing.md,
+    lineHeight: typography.fontSize.sm * 1.5,
     textAlign: 'center',
   },
 });
